@@ -1,0 +1,6 @@
+starlette>=0.37
+uvicorn>=0.30
+numpy>=1.24
+pillow>=10.0
+# only needed once you drop a real model in models/ (without it the backend runs in MOCK mode):
+onnxruntime>=1.17

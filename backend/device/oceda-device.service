@@ -1,0 +1,21 @@
+# Install on the Pi:
+#   sudo cp oceda-device.service /etc/systemd/system/ && sudo systemctl enable --now oceda-device
+# Edit User, paths, server address and token first.
+[Unit]
+Description=OCEDA capture client
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=pi
+Environment=OCEDA_SERVER=http://192.168.1.50:8000
+Environment=OCEDA_DEVICE_TOKEN=change-me
+# Zero W on weak Wi-Fi? uncomment to send smaller frames:
+# Environment=OCEDA_WIDTH=1640
+# Environment=OCEDA_HEIGHT=1232
+ExecStart=/usr/bin/python3 /home/pi/oceda/pi_client.py
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
