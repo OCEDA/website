@@ -1,15 +1,48 @@
-"""All settings come from environment variables (see .env.example)."""
+"""All settings come from environment variables (see .env.example).
+
+If backend/.env exists it is loaded automatically, so there is nothing to `source` or `export`.
+Real environment variables always win over the file.
+"""
 import os
 from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
 
+def _load_dotenv(path: Path) -> None:
+    """Tiny .env reader (KEY=value, # comments, optional quotes) so we need no extra dependency."""
+    if not path.is_file():
+        return
+    for raw in path.read_text(encoding="utf-8").splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        if line.startswith("export "):
+            line = line[len("export "):].lstrip()
+        key, _, val = line.partition("=")
+        key, val = key.strip(), val.strip()
+        if len(val) >= 2 and val[0] == val[-1] and val[0] in "\"'":
+            val = val[1:-1]
+        else:
+            val = val.split(" #")[0].strip()  # trailing inline comment
+        if key and val:  # blank value -> keep the built-in default
+            os.environ.setdefault(key, val)
+
+
+_load_dotenv(BASE_DIR / ".env")
+
+
 def _env(name, default):
     return os.getenv(name, default)
 
 
-DATA_DIR = Path(_env("OCEDA_DATA_DIR", str(BASE_DIR / "data")))
+def _path(name, default: Path) -> Path:
+    """Path setting; a relative value is taken relative to backend/, not to the shell's cwd."""
+    p = Path(_env(name, str(default)))
+    return p if p.is_absolute() else BASE_DIR / p
+
+
+DATA_DIR = _path("OCEDA_DATA_DIR", BASE_DIR / "data")
 DB_PATH = DATA_DIR / "oceda.db"
 CAPTURE_DIR = DATA_DIR / "captures"
 HEATMAP_DIR = DATA_DIR / "heatmaps"
@@ -17,7 +50,7 @@ OUTBOX_DIR = DATA_DIR / "outbox"  # .eml files land here when SMTP is not config
 
 # --- auth / seeding (prototype defaults - change them) ---
 DEMO_EMAIL = _env("OCEDA_DEMO_EMAIL", "dr.sari@oceda.local")
-DEMO_PASSWORD = _env("OCEDA_DEMO_PASSWORD", "oceda123")
+DEMO_PASSWORD = _env("OCEDA_DEMO_PASSWORD", "ocedaaa")
 DEMO_NAME = _env("OCEDA_DEMO_NAME", "Dr. Dewi Sari")
 DEMO_DEVICE_TOKEN = _env("OCEDA_DEVICE_TOKEN", "oceda-dev-device-token")
 OPEN_SIGNUP = _env("OCEDA_OPEN_SIGNUP", "1") == "1"
@@ -31,7 +64,7 @@ DEVICE_ONLINE_SECONDS = int(_env("OCEDA_DEVICE_ONLINE_SECONDS", "30"))
 
 # --- AI ---
 # No model file -> MOCK mode (random-but-deterministic output, clearly flagged "mock": true).
-MODEL_PATH = Path(_env("OCEDA_MODEL", str(BASE_DIR / "models" / "model.onnx")))
+MODEL_PATH = _path("OCEDA_MODEL", BASE_DIR / "models" / "model.onnx")
 MODEL_KIND = _env("OCEDA_MODEL_KIND", "resnet")          # resnet | yolo
 LABELS = [s.strip() for s in _env("OCEDA_LABELS", "Normal,Abnormal").split(",")]
 INPUT_SIZE = int(_env("OCEDA_INPUT_SIZE", "640" if MODEL_KIND == "yolo" else "224"))

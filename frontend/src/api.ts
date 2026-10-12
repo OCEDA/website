@@ -1,4 +1,4 @@
-// Thin client for the OCEDA backend (see ../backend/README.md).
+// Thin client for the OCEDA backend (see the root README.md, "API" section).
 // Uses same-origin "/api" (Vite proxies it to http://localhost:8000 in dev, see vite.config.ts).
 // Set VITE_API_URL=http://host:8000 to point somewhere else (backend CORS must allow the origin).
 
