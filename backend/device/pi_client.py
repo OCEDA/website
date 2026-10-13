@@ -7,8 +7,11 @@ Pure standard library, Python 3.7+, so a stock Raspberry Pi OS works with nothin
 
   OCEDA_SERVER=http://192.168.1.50:8000 OCEDA_DEVICE_TOKEN=... python3 pi_client.py
 
-  --keyboard   press Enter instead of a GPIO button
+  --keyboard   press Enter instead of a GPIO button (button is GPIO21 / physical pin 40, to GND)
   --simulate FILE_OR_DIR   upload existing JPEGs instead of using a camera (test without hardware)
+
+Busy flag: after a press, further presses are ignored (not queued) until that shot has been captured
+AND sent, so a slow or offline link can't pile up frames. --allow-queue only blocks during the capture.
 """
 from __future__ import annotations
 
@@ -52,6 +55,8 @@ def capture_frame(args, out: Path) -> bool:
         if not src:
             log("no jpeg found in", args.simulate)
             return False
+        if not args.once:
+            time.sleep(args.sim_delay)                      # pretend the camera needs a moment
         capture_frame.n = getattr(capture_frame, "n", -1) + 1
         shutil.copy(src[capture_frame.n % len(src)], out)
         return True
@@ -138,14 +143,28 @@ def main():
     ap.add_argument("--height", type=int, default=int(os.getenv("OCEDA_HEIGHT", 2464)))  # (use 1640x1232 on slow Wi-Fi)
     ap.add_argument("--quality", type=int, default=int(os.getenv("OCEDA_JPEG_Q", 90)))
     ap.add_argument("--warmup-ms", type=int, default=int(os.getenv("OCEDA_WARMUP_MS", 800)))
-    ap.add_argument("--button-pin", type=int, default=int(os.getenv("OCEDA_BUTTON_PIN", 17)))  # BCM, wire to GND
+    ap.add_argument("--button-pin", type=int, default=int(os.getenv("OCEDA_BUTTON_PIN", 21)))  # BCM21 = physical pin 40, wire to GND
     ap.add_argument("--keyboard", action="store_true")
     ap.add_argument("--simulate", metavar="PATH")
     ap.add_argument("--once", action="store_true", help="capture one frame immediately, flush, exit")
+    ap.add_argument("--allow-queue", action="store_true",
+                    help="only stay busy while capturing; accept the next press while the last shot uploads")
+    ap.add_argument("--busy-timeout", type=int, default=int(os.getenv("OCEDA_BUSY_TIMEOUT", 90)),
+                    help="max seconds the button stays locked waiting for an upload (frame stays queued after)")
+    ap.add_argument("--sim-delay", type=float, default=1.5,
+                    help="with --simulate: seconds the fake camera takes per shot (ignored with --once)")
     args = ap.parse_args()
 
     SPOOL.mkdir(parents=True, exist_ok=True)
     stop, pressed, wake = threading.Event(), threading.Event(), threading.Event()
+    busy = threading.Lock()   # held from an accepted press until its shot is captured (+ sent)
+
+    def on_press():
+        """Button or Enter. Atomic test-and-set, so a double press can never start two captures."""
+        if busy.acquire(blocking=False):
+            pressed.set()
+        else:
+            log("busy - press ignored")
     threading.Thread(target=flush_spool, args=(stop, wake), daemon=True).start()
     threading.Thread(target=heartbeat_loop, args=(stop, args), daemon=True).start()
 
@@ -154,7 +173,7 @@ def main():
         try:
             from gpiozero import Button
             button = Button(args.button_pin, pull_up=True, bounce_time=0.08)
-            button.when_pressed = pressed.set
+            button.when_pressed = on_press
             log(f"ready - press the button (GPIO{args.button_pin}). server={SERVER}")
         except Exception as e:
             log("GPIO button unavailable (%s) - falling back to keyboard" % e)
@@ -162,28 +181,41 @@ def main():
     if args.keyboard:
         def reader():
             for _ in sys.stdin:
-                pressed.set()
+                on_press()
         threading.Thread(target=reader, daemon=True).start()
         log("ready - press Enter to capture. server=" + SERVER)
     if args.once:
-        pressed.set()
+        on_press()
 
     try:
         while True:
             pressed.wait()
-            pressed.clear()                                 # presses during a capture are ignored (debounce)
-            cap_id = uuid.uuid4().hex
-            tmp = SPOOL / (cap_id + ".part")
-            if capture_frame(args, tmp):
-                final = tmp.with_suffix(".jpg")
-                tmp.rename(final)                           # appears in spool only when complete
-                log("captured", final.name)
-                wake.set()                                  # uploader thread sends it right away
-            if args.once:
-                deadline = time.time() + 90
-                while list(SPOOL.glob("*.jpg")) and time.time() < deadline:
-                    time.sleep(0.3)
-                break
+            pressed.clear()
+            try:
+                cap_id = uuid.uuid4().hex
+                tmp = SPOOL / (cap_id + ".part")
+                final = None
+                if capture_frame(args, tmp):
+                    final = tmp.with_suffix(".jpg")
+                    tmp.rename(final)                       # appears in spool only when complete
+                    log("captured", final.name)
+                    wake.set()                              # uploader thread sends it right away
+                if args.once:
+                    deadline = time.time() + 90
+                    while list(SPOOL.glob("*.jpg")) and time.time() < deadline:
+                        time.sleep(0.3)
+                    break
+                if final and not args.allow_queue:
+                    # stay busy until this frame is sent (the uploader removes it, or renames it
+                    # to .rejected), so presses can't stack up behind a slow or offline link
+                    deadline = time.time() + args.busy_timeout
+                    while final.exists() and time.time() < deadline:
+                        time.sleep(0.2)
+                    if final.exists():
+                        log(f"still not sent after {args.busy_timeout}s - button re-enabled, frame stays queued")
+            finally:
+                busy.release()
+            log("ready")
     except KeyboardInterrupt:
         pass
     finally:

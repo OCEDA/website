@@ -67,7 +67,7 @@ In a second terminal, simulate the device with the sample JPEGs in `testimgs/` (
 python backend/device/pi_client.py --keyboard --simulate testimgs
 ```
 
-Shots show up live on the Capture screen. A frame is attached to the doctor's **most recent open exam**, so start an
+Shots show up live on the Capture screen. The fake camera takes 1.5 s per shot (`--sim-delay`); press Enter several times quickly to see the busy flag ignore all but the first. A frame is attached to the doctor's **most recent open exam**, so start an
 exam in the web app first. (`testimgs/` holds generic placeholder photos, not ears - fine for testing the plumbing.)
 
 ### Running the two halves by hand
@@ -192,7 +192,8 @@ OCEDA_SERVER=http://<server-lan-ip>:8000 OCEDA_DEVICE_TOKEN=... python3 ~/oceda/
 directly (port 8000), not through Vite.
 
 - Camera app is auto-detected: `rpicam-still` (Bookworm) → `libcamera-still` (Bullseye) → `raspistill` (legacy).
-- Button: GPIO17 (physical pin 11) to GND; `--button-pin` changes it; `--keyboard` = press Enter instead.
+- Button: **GPIO21 (physical pin 40)** to GND (pin 39 is the ground right next to it); `--button-pin` or `OCEDA_BUTTON_PIN` changes it; `--keyboard` = press Enter instead.
+- Busy flag: after a press, further presses are ignored (logged as `busy - press ignored`, never queued) until that shot has been captured **and** sent, so a slow or offline link can't pile up frames. If the upload hasn't finished after `--busy-timeout` seconds (default 90) the button unlocks and the frame stays safely queued on disk. `--allow-queue` only locks the button during the capture itself.
 - Default 3280×2464 (IMX219 full-res, ~2-4 MB). On weak Wi-Fi: `OCEDA_WIDTH=1640 OCEDA_HEIGHT=1232`.
 - Autostart on boot: edit and install `backend/device/oceda-device.service`.
 - No inference on the Pi - the Zero W is too weak and can't run onnxruntime; it only captures and ships.
