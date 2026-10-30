@@ -10,6 +10,9 @@ Pure standard library, Python 3.7+, so a stock Raspberry Pi OS works with nothin
   --keyboard   press Enter instead of a GPIO button (button is GPIO21 / physical pin 40, to GND)
   --simulate FILE_OR_DIR   upload existing JPEGs instead of using a camera (test without hardware)
 
+  --native [BIN]   the C++ capture program (capture/oceda_capture.cpp) owns the camera, LCD preview, LEDs and
+                   button; this script just runs it and uploads the JPEGs it drops in the spool
+
 Busy flag: after a press, further presses are ignored (not queued) until that shot has been captured
 AND sent, so a slow or offline link can't pile up frames. --allow-queue only blocks during the capture.
 """
@@ -125,11 +128,55 @@ def flush_spool(stop: threading.Event, wake: threading.Event):
         wake.wait(delay if failed else 30)
 
 
+def run_native(stop: threading.Event, wake: threading.Event, binary: Path):
+    """Keep the C++ capture program running. It writes <id>.part -> <id>.jpg into the spool itself;
+    the uploader thread picks the finished files up. Restarts it (3s -> 30s backoff) if it exits."""
+    delay = 3
+    while not stop.is_set():
+        started = time.time()
+        try:
+            proc = subprocess.Popen([str(binary)], env={**os.environ, "OCEDA_SPOOL": str(SPOOL)},
+                                    stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
+        except OSError as e:
+            log(f"cannot start {binary}: {e} - build it with `make` in {binary.parent}")
+            stop.wait(delay)
+            delay = min(30, delay * 2)
+            continue
+        log("capture program started, pid", proc.pid)
+        reader_done = threading.Event()
+
+        def pump():
+            for line in proc.stdout:
+                line = line.rstrip()
+                if line.startswith("FPS:"):
+                    continue                                # one line every 2s is just noise
+                log("[capture]", line)
+                if line.startswith("captured "):
+                    wake.set()                              # upload right away
+            reader_done.set()
+        threading.Thread(target=pump, daemon=True).start()
+        while proc.poll() is None and not stop.is_set():
+            stop.wait(0.5)
+        if proc.poll() is None:
+            proc.terminate()                                # SIGTERM: the program turns the LEDs off itself
+            try:
+                proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+        reader_done.wait(1)
+        if stop.is_set():
+            break
+        log(f"capture program exited ({proc.returncode}) - restarting in {delay}s")
+        delay = 3 if time.time() - started > 60 else min(30, delay * 2)
+        stop.wait(delay)
+
+
 def heartbeat_loop(stop: threading.Event, args):
+    res = "240x240" if args.native else f"{args.width}x{args.height}"
     while not stop.is_set():
         try:
             http("POST", "/api/device/heartbeat",
-                 json.dumps({"firmware": "pi_client/1", "resolution": f"{args.width}x{args.height}"}).encode(),
+                 json.dumps({"firmware": "pi_client/1" + ("+native" if args.native else ""), "resolution": res}).encode(),
                  {"Content-Type": "application/json"}, timeout=10)
         except Exception:
             pass
@@ -146,6 +193,9 @@ def main():
     ap.add_argument("--button-pin", type=int, default=int(os.getenv("OCEDA_BUTTON_PIN", 21)))  # BCM21 = physical pin 40, wire to GND
     ap.add_argument("--keyboard", action="store_true")
     ap.add_argument("--simulate", metavar="PATH")
+    ap.add_argument("--native", nargs="?", const="", metavar="BIN",
+                    help="run the C++ capture program (default: capture/oceda_capture next to this script, "
+                         "or $OCEDA_CAPTURE_BIN) instead of using rpicam-still + gpiozero")
     ap.add_argument("--once", action="store_true", help="capture one frame immediately, flush, exit")
     ap.add_argument("--allow-queue", action="store_true",
                     help="only stay busy while capturing; accept the next press while the last shot uploads")
@@ -154,6 +204,9 @@ def main():
     ap.add_argument("--sim-delay", type=float, default=1.5,
                     help="with --simulate: seconds the fake camera takes per shot (ignored with --once)")
     args = ap.parse_args()
+    native_bin, args.native = args.native, args.native is not None
+    if args.native and (args.simulate or args.keyboard or args.once):
+        ap.error("--native can't be combined with --simulate / --keyboard / --once")
 
     SPOOL.mkdir(parents=True, exist_ok=True)
     stop, pressed, wake = threading.Event(), threading.Event(), threading.Event()
@@ -167,6 +220,19 @@ def main():
             log("busy - press ignored")
     threading.Thread(target=flush_spool, args=(stop, wake), daemon=True).start()
     threading.Thread(target=heartbeat_loop, args=(stop, args), daemon=True).start()
+
+    if args.native:
+        binary = Path(native_bin or os.getenv("OCEDA_CAPTURE_BIN")
+                      or Path(__file__).resolve().parent / "capture" / "oceda_capture")
+        threading.Thread(target=run_native, args=(stop, wake, binary), daemon=True).start()
+        log(f"native mode - {binary} owns camera + button. server={SERVER}")
+        try:
+            while True:
+                time.sleep(3600)
+        except KeyboardInterrupt:
+            stop.set()
+            time.sleep(1)                                   # let the supervisor stop the program (LEDs off)
+            return
 
     button = None
     if not args.keyboard and not args.once:

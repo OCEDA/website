@@ -100,6 +100,7 @@ instead: `git lfs install && git clone <repo-url>` (or run `git lfs pull` in an 
 ├── backend/
 │   ├── app/               Starlette app: main.py (routes), ai.py (model), auth, db, mailer, config, manage
 │   ├── device/            pi_client.py (runs on the Pi) + oceda-device.service (systemd)
+│   │   └── capture/       oceda_capture.cpp - the real device program (camera, LCD preview, LEDs, button) + Makefile
 │   ├── models/            put model.onnx here (git-ignored)
 │   ├── tests/             smoke_test.py - end-to-end check
 │   ├── tools/             make_dummy_onnx.py - fake model for plumbing tests
@@ -198,6 +199,29 @@ directly (port 8000), not through Vite.
 - Autostart on boot: edit and install `backend/device/oceda-device.service`.
 - No inference on the Pi - the Zero W is too weak and can't run onnxruntime; it only captures and ships.
 
+### Real device: C++ capture program (`--native`)
+
+The actual otoscope hardware is driven by `backend/device/capture/oceda_capture.cpp`: libcamera 320×320 preview
+(center 240×240 crop) on the ST7789 LCD, the 4 illumination LEDs, and the capture button on GPIO21. A button press
+saves the 240×240 crop as JPEG (quality 90) into the spool (`$OCEDA_SPOOL`, default `~/oceda-spool`) as `.part`, then
+renames it to `.jpg`. `pi_client.py --native` starts that program, restarts it if it dies, and uploads whatever lands
+in the spool with the same retry/backoff logic as before.
+
+```bash
+# on the Pi (Raspberry Pi OS Bookworm: libgpiod 2.x is required)
+sudo apt install -y g++ make pkg-config libcamera-dev libgpiod-dev libjpeg-dev
+make -C backend/device/capture
+OCEDA_SERVER=http://<server-lan-ip>:8000 OCEDA_DEVICE_TOKEN=... python3 backend/device/pi_client.py --native
+```
+
+- The C++ program owns the camera, GPIO21, SPI and LEDs, so don't run it together with the `rpicam-still` / `gpiozero`
+  path; `--native` replaces it. `--simulate`, `--keyboard` and `--once` still work for testing without hardware.
+- Binary location: `--native /path/to/oceda_capture`, or `OCEDA_CAPTURE_BIN`, or `capture/oceda_capture` next to the script.
+- Frames are 240×240 (what the LCD shows), so uploads are small (~20 KB); there is no busy lock in this mode.
+- If saved images have red and blue swapped, rebuild with `make clean && make SWAP_RB=1` (libcamera's `RGB888` is
+  B,G,R in memory; the LCD path was kept exactly as in the working preview).
+- Run `./oceda_capture` by hand to see the preview and button without any upload.
+
 ### Frame quality hint
 
 Each upload is scored (Laplacian-variance sharpness + exposure → `quality.score` 0-100) and
@@ -259,7 +283,7 @@ Pi. It covers auth, uploads and retries, SSE, selection, analysis, email, and pe
 - [x] AI inference pipeline (ResNet / YOLO via ONNX) with mock fallback
 - [x] Result email with heatmap
 - [ ] Real trained model in `backend/models/` (currently mock unless you add one)
-- [ ] Camera/GPIO path verified on physical hardware (so far exercised only with `--simulate`)
+- [ ] `--native` path verified on physical hardware (the C++ capture program compiles; the upload path was tested with a stand-in binary, not the real camera)
 
 ### Known limits (prototype)
 

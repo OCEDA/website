@@ -13,7 +13,10 @@ Environment=OCEDA_DEVICE_TOKEN=change-me
 # Zero W on weak Wi-Fi? uncomment to send smaller frames:
 # Environment=OCEDA_WIDTH=1640
 # Environment=OCEDA_HEIGHT=1232
-ExecStart=/usr/bin/python3 /home/pi/oceda/pi_client.py
+# Real device (C++ capture program, build it first with `make -C /home/pi/oceda/capture`):
+ExecStart=/usr/bin/python3 /home/pi/oceda/pi_client.py --native
+# Camera-app + gpiozero path instead:
+# ExecStart=/usr/bin/python3 /home/pi/oceda/pi_client.py
 Restart=always
 RestartSec=3
 
