@@ -10,12 +10,13 @@ import Capture from "./screens/Capture";
 import AIResult from "./screens/AIResult";
 import Landing from "./screens/Landing";
 import Login from "./screens/Login";
+import Register from "./screens/Register";
 import Settings from "./screens/Settings";
 import { I18nProvider, useI18n } from "./i18n";
 import * as api from "./api";
 import type { ApiExam, ApiUser, DeviceStatus } from "./api";
 
-export type Screen = "landing" | "login" | "settings" | "dashboard" | "patient-info" | "capture" | "ai-result";
+export type Screen = "landing" | "login" | "register" | "settings" | "dashboard" | "patient-info" | "capture" | "ai-result";
 
 export interface Patient {
   id: string;
@@ -42,6 +43,7 @@ const formatRes = (r?: string | null) => (r ? r.replace("x", "×") : "—");
 function routeFor(screen: Screen, examId?: string) {
   if (screen === "landing") return "/";
   if (screen === "login") return "/login";
+  if (screen === "register") return "/register";
   if (screen === "dashboard") return "/dashboard";
   if (screen === "settings") return "/settings";
   if (screen === "patient-info") return "/examinations/new";
@@ -53,6 +55,7 @@ function routeFromLocation(): { screen: Screen; examId?: string } {
   const parts = window.location.pathname.split("/").filter(Boolean).map(decodeURIComponent);
   if (parts.length === 0) return { screen: api.getToken() ? "dashboard" : "landing" };
   if (parts.length === 1 && parts[0] === "login") return { screen: "login" };
+  if (parts.length === 1 && parts[0] === "register") return { screen: api.getToken() ? "dashboard" : "register" };
   if (parts.length === 1 && parts[0] === "dashboard") return { screen: api.getToken() ? "dashboard" : "login" };
   if (parts.length === 1 && parts[0] === "settings") return { screen: api.getToken() ? "settings" : "login" };
   if (parts.length === 2 && parts[0] === "examinations" && parts[1] === "new") {
@@ -158,7 +161,7 @@ function AppShell() {
   }, [exam?.id, routeExamId, screen]);
 
   // device chips: poll the backend (the Pi sends a heartbeat every 10s)
-  const loggedIn = screen !== "landing" && screen !== "login";
+  const loggedIn = screen !== "landing" && screen !== "login" && screen !== "register";
   useEffect(() => {
     if (!loggedIn) return;
     let live = true;
@@ -172,7 +175,7 @@ function AppShell() {
   }, [loggedIn]);
 
   const goTo = (s: Screen, examId?: string) => {
-    if (s !== "landing" && s !== "login" && !api.getToken()) s = "login";
+    if (s !== "landing" && s !== "login" && s !== "register" && !api.getToken()) s = "login";
     const target = routeFor(s, examId);
     window.history.pushState(null, "", target);
     setScreen(s);
@@ -192,10 +195,10 @@ function AppShell() {
 
   useEffect(() => { window.scrollTo(0, 0); }, [screen]);
 
-  if (screen === "landing" || screen === "login") {
+  if (screen === "landing" || screen === "login" || screen === "register") {
     return (
       <div className="min-h-screen">
-        {screen === "landing" ? <Landing {...navProps} /> : <Login {...navProps} />}
+        {screen === "landing" ? <Landing {...navProps} /> : screen === "login" ? <Login {...navProps} /> : <Register {...navProps} />}
       </div>
     );
   }

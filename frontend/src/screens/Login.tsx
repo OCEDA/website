@@ -25,11 +25,9 @@ export default function Login({ goTo, setUser }: NavProps) {
       setUser(await api.login(email.trim(), password));
       goTo("dashboard");
     } catch (ex) {
-      setServerError(
-        ex instanceof api.ApiError && ex.status === 401
-          ? "Incorrect email or password"
-          : `Cannot reach the backend${ex instanceof api.ApiError && ex.status ? ` (HTTP ${ex.status})` : ""}. Is it running on port 8000?`,
-      );
+      if (ex instanceof api.ApiError && ex.status === 401) setServerError("Incorrect email or password");
+      else if (ex instanceof api.ApiError && ex.status === 0) setServerError("Cannot reach the backend. Is it running on port 8000?");
+      else setServerError(`Server error${ex instanceof api.ApiError ? ` (HTTP ${ex.status})` : ""}. Check the backend terminal for details.`);
     } finally {
       setBusy(false);
     }
@@ -120,6 +118,12 @@ export default function Login({ goTo, setUser }: NavProps) {
         </form>
 
         <p className="text-xs text-center text-muted dark:text-muted-dark mt-5">
+          New here?{" "}
+          <button onClick={() => goTo("register")} className="font-semibold text-primary-ink dark:text-primary-soft cursor-pointer">
+            Create an account
+          </button>
+        </p>
+        <p className="text-xs text-center text-muted dark:text-muted-dark mt-2">
           Prototype build. Demo account: dr.sari@oceda.local / oceda123
         </p>
       </div>

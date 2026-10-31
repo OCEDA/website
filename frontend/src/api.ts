@@ -109,6 +109,12 @@ export async function login(email: string, password: string): Promise<ApiUser> {
   setToken(r.token);
   return r.user;
 }
+export async function register(name: string, email: string, password: string): Promise<ApiUser> {
+  const r = await request<{ token: string; user: ApiUser }>(
+    "/api/auth/register", { method: "POST", body: JSON.stringify({ name, email, password }) }, false);
+  setToken(r.token);
+  return r.user;
+}
 export const me = () => request<ApiUser>("/api/auth/me");
 export async function logout(): Promise<void> {
   try { await request("/api/auth/logout", { method: "POST" }); } catch { /* already gone */ }

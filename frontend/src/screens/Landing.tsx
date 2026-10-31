@@ -61,12 +61,20 @@ export default function Landing({ goTo }: NavProps) {
             </button>
           ))}
         </nav>
-        <button
-          onClick={() => goTo("login")}
-          className="px-5 py-2 rounded-xl btn-gradient text-sm font-semibold cursor-pointer"
-        >
-          Login
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => goTo("register")}
+            className="px-4 py-2 rounded-xl border border-[#E8E8E8] dark:border-[#1E293B] bg-white dark:bg-[#1E2A3B] text-sm font-semibold text-[#1F1F1F] dark:text-[#F1F5F9] hover:border-primary transition-colors cursor-pointer"
+          >
+            Sign up
+          </button>
+          <button
+            onClick={() => goTo("login")}
+            className="px-5 py-2 rounded-xl btn-gradient text-sm font-semibold cursor-pointer"
+          >
+            Login
+          </button>
+        </div>
       </header>
 
       <main className="max-w-[1080px] mx-auto px-5 sm:px-8 pb-10">
@@ -88,6 +96,12 @@ export default function Landing({ goTo }: NavProps) {
                 className="flex items-center gap-2 px-6 py-3 rounded-xl btn-gradient text-sm font-semibold cursor-pointer"
               >
                 Get started <ArrowRight size={16} />
+              </button>
+              <button
+                onClick={() => goTo("register")}
+                className="px-6 py-3 rounded-xl border border-[#E8E8E8] dark:border-[#1E293B] bg-white dark:bg-[#1E2A3B] text-sm font-semibold text-[#1F1F1F] dark:text-[#F1F5F9] hover:border-primary transition-colors cursor-pointer"
+              >
+                Create account
               </button>
               <button
                 onClick={() => scrollTo("features")}
