@@ -12,6 +12,7 @@ import Landing from "./screens/Landing";
 import Login from "./screens/Login";
 import Register from "./screens/Register";
 import Settings from "./screens/Settings";
+import Avatar from "./Avatar";
 import { I18nProvider, useI18n } from "./i18n";
 import * as api from "./api";
 import type { ApiExam, ApiUser, DeviceStatus } from "./api";
@@ -259,9 +260,7 @@ function AppShell() {
 
           {/* User avatar */}
           <div className="flex items-center gap-2 pl-1">
-            <div className="w-8 h-8 rounded-full bg-soft-blue dark:bg-primary/20 ring-2 ring-accent/60 overflow-hidden shrink-0">
-              <img src="/dr-sari.png" alt="Dr. Dewi Sari" className="w-full h-full object-cover scale-[2.1] origin-[52%_26%]" />
-            </div>
+            <Avatar name={user?.name} url={user?.avatar_url} size="w-8 h-8 text-xs" />
             <span className="hidden sm:block text-sm font-medium text-[#1F1F1F] dark:text-[#F1F5F9]">
               {user?.name ?? ""}
             </span>
@@ -365,9 +364,7 @@ function SidebarContent({
       {/* User profile */}
       <div className="mx-3 mb-4 p-3 rounded-xl border border-[#E8E8E8] dark:border-[#1E293B] bg-white dark:bg-[#1E2A3B]">
         <div className="flex items-center gap-3">
-          <div className="w-9 h-9 rounded-full bg-soft-blue dark:bg-primary/20 ring-2 ring-accent/60 overflow-hidden shrink-0">
-              <img src="/dr-sari.png" alt="Dr. Dewi Sari" className="w-full h-full object-cover scale-[2.1] origin-[52%_26%]" />
-            </div>
+          <Avatar name={user?.name} url={user?.avatar_url} size="w-9 h-9 text-sm" />
           <div className="min-w-0">
             <p className="text-sm font-semibold text-[#1F1F1F] dark:text-[#F1F5F9] truncate font-display">
               {user?.name ?? ""}
