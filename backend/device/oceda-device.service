@@ -1,6 +1,8 @@
 # Install on the Pi:
 #   sudo cp oceda-device.service /etc/systemd/system/ && sudo systemctl enable --now oceda-device
 # Edit User, paths, server address and token first.
+# User= must be the account that owns the oceda folder (and the default Pi accounts are already in the
+# gpio, spi and video groups the camera, LCD and button need). OCEDA_SPOOL defaults to that user's ~/oceda-spool.
 [Unit]
 Description=OCEDA capture client
 After=network-online.target
@@ -13,7 +15,7 @@ Environment=OCEDA_DEVICE_TOKEN=change-me
 # Zero W on weak Wi-Fi? uncomment to send smaller frames:
 # Environment=OCEDA_WIDTH=1640
 # Environment=OCEDA_HEIGHT=1232
-# Real device (C++ capture program, build it first with `make -C /home/pi/oceda/capture`):
+# Real device (C++ capture program, build it first with `make -C /home/pi/oceda/capture`; needs libgpiod 2.x):
 ExecStart=/usr/bin/python3 /home/pi/oceda/pi_client.py --native
 # Camera-app + gpiozero path instead:
 # ExecStart=/usr/bin/python3 /home/pi/oceda/pi_client.py
