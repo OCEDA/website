@@ -30,7 +30,9 @@ CREATE TABLE IF NOT EXISTS results(
   exam_id TEXT PRIMARY KEY REFERENCES exams(id), capture_id TEXT NOT NULL,
   label TEXT NOT NULL, confidence REAL NOT NULL, probs TEXT NOT NULL,
   heatmap_path TEXT NOT NULL, model TEXT NOT NULL, mock INTEGER NOT NULL,
-  email_status TEXT, created_at TEXT NOT NULL);
+  email_status TEXT, created_at TEXT NOT NULL,
+  segmentation_overlay_path TEXT, segmentation_mask_path TEXT, segmentation_evidence TEXT,
+  segmentation_mock INTEGER);
 """
 
 
@@ -62,3 +64,13 @@ def init():
     config.ensure_dirs()
     with conn() as c:
         c.executescript(SCHEMA)
+        # Migrations if new columns don't exist yet
+        cols = [r[1] for r in c.execute("PRAGMA table_info(results)").fetchall()]
+        if "segmentation_overlay_path" not in cols:
+            c.execute("ALTER TABLE results ADD COLUMN segmentation_overlay_path TEXT")
+        if "segmentation_mask_path" not in cols:
+            c.execute("ALTER TABLE results ADD COLUMN segmentation_mask_path TEXT")
+        if "segmentation_evidence" not in cols:
+            c.execute("ALTER TABLE results ADD COLUMN segmentation_evidence TEXT")
+        if "segmentation_mock" not in cols:
+            c.execute("ALTER TABLE results ADD COLUMN segmentation_mock INTEGER")

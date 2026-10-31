@@ -20,6 +20,14 @@ export interface ApiCapture {
   created_at: string;
 }
 
+export interface SegmentationClassEvidence {
+  name: string;
+  visible: boolean;
+  area_ratio: number; // in %
+  confidence: number; // in %
+  color: [number, number, number]; // [R, G, B]
+}
+
 export interface ApiResult {
   classification: string; // "Normal" | "Abnormal" (OCEDA_LABELS on the backend)
   confidence: number; // 0-100
@@ -28,6 +36,9 @@ export interface ApiResult {
   original_url: string;
   original_full_url?: string;
   heatmap_url: string;
+  segmentation_overlay_url?: string | null;
+  segmentation_mask_url?: string | null;
+  segmentation_evidence?: Record<string, SegmentationClassEvidence> | null;
   model: string;
   mock: boolean; // true => no real model loaded, result is simulated
   email: string | null;

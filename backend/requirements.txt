@@ -4,5 +4,6 @@ numpy>=1.24
 pillow>=10.0
 # Only used once you drop a real model in models/ (without it the backend runs in MOCK mode):
 onnxruntime>=1.17
+opencv-python-headless>=4.8
 # Only used by tests/smoke_test.py:
 requests>=2.31

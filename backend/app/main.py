@@ -46,12 +46,24 @@ def cap_json(r) -> dict:
 
 
 def result_json(r) -> dict:
+    r = dict(r)  # sqlite3.Row tidak punya .get()
+    evidence = None
+    if r.get("segmentation_evidence"):
+        try:
+            evidence = json.loads(r["segmentation_evidence"])
+        except Exception:
+            evidence = None
+
     return {"classification": r["label"], "confidence": r["confidence"],
             "probabilities": json.loads(r["probs"]),
             "capture_id": r["capture_id"],
             "original_url": f"/api/exams/{r['exam_id']}/cropped",
             "original_full_url": f"/api/captures/{r['capture_id']}/image",
             "heatmap_url": f"/api/exams/{r['exam_id']}/heatmap",
+            "segmentation_overlay_url": f"/api/exams/{r['exam_id']}/segmentation/overlay" if r.get("segmentation_overlay_path") else None,
+            "segmentation_mask_url": f"/api/exams/{r['exam_id']}/segmentation/mask" if r.get("segmentation_mask_path") else None,
+            "segmentation_evidence": evidence,
+            "segmentation_mock": bool(r.get("segmentation_mock")),
             "model": r["model"], "mock": bool(r["mock"]),
             "email": r["email_status"], "created_at": r["created_at"]}
 
@@ -230,16 +242,34 @@ async def cropped_image(request):
     if cap and Path(cap["path"]).exists():
         try:
             img = ai.open_image(cap["path"])
-            crop_img = ai.center_crop_square(img)
-            if crop_img.width > 1024:
-                crop_img = crop_img.resize((1024, 1024), Image.LANCZOS)
+            crop_img = ai.classifier_preprocessed_image(img)
             cpath.parent.mkdir(parents=True, exist_ok=True)
-            crop_img.save(str(cpath), "JPEG", quality=90)
+            crop_img.save(str(cpath), "JPEG", quality=95)
             return FileResponse(cpath, media_type="image/jpeg", headers={"Cache-Control": "no-cache"})
         except Exception as ex:
             log.warning("failed to crop capture: %s", ex)
             return FileResponse(cap["path"], media_type="image/jpeg")
     raise HTTPException(404, "image not found")
+
+
+async def segmentation_overlay_image(request):
+    user = auth.current_user(request)
+    with db.conn() as c:
+        e = get_exam(c, request.path_params["exam_id"], user)
+        r = c.execute("SELECT segmentation_overlay_path FROM results WHERE exam_id=?", (e["id"],)).fetchone()
+    if not r or not r["segmentation_overlay_path"] or not Path(r["segmentation_overlay_path"]).exists():
+        raise HTTPException(404, "no segmentation overlay yet")
+    return FileResponse(r["segmentation_overlay_path"], media_type="image/jpeg", headers={"Cache-Control": "no-cache"})
+
+
+async def segmentation_mask_image(request):
+    user = auth.current_user(request)
+    with db.conn() as c:
+        e = get_exam(c, request.path_params["exam_id"], user)
+        r = c.execute("SELECT segmentation_mask_path FROM results WHERE exam_id=?", (e["id"],)).fetchone()
+    if not r or not r["segmentation_mask_path"] or not Path(r["segmentation_mask_path"]).exists():
+        raise HTTPException(404, "no segmentation mask yet")
+    return FileResponse(r["segmentation_mask_path"], media_type="image/png", headers={"Cache-Control": "no-cache"})
 
 
 # ───────────────────────── AI analysis ─────────────────────────
@@ -250,10 +280,13 @@ def _email_task(exam_id: str, to: str):
         cap = c.execute("SELECT path FROM captures WHERE id=?", (r["capture_id"],)).fetchone()
     cpath = config.HEATMAP_DIR / f"{exam_id}_crop.jpg"
     orig_path = cpath if cpath.exists() else Path(cap["path"])
+    seg_path = Path(r["segmentation_overlay_path"]) if r["segmentation_overlay_path"] else None
+    if seg_path is not None and not seg_path.exists():
+        seg_path = None
     try:
         status = mailer.send_result(
             to, dict(e), {"label": r["label"], "confidence": r["confidence"], "mock": bool(r["mock"])},
-            orig_path, Path(r["heatmap_path"]))
+            orig_path, Path(r["heatmap_path"]), seg_path)
     except Exception as ex:  # never let email problems break the result
         log.exception("email failed")
         status = f"failed: {ex}"
@@ -288,11 +321,31 @@ async def analyze(request):
     crop_bytes = res.pop("cropped_jpeg", None)
     if crop_bytes:
         cpath.write_bytes(crop_bytes)
+
+    seg_overlay_bytes = res.pop("segmentation_overlay_jpeg", None)
+    seg_mask_bytes = res.pop("segmentation_mask_png", None)
+    seg_evidence = res.pop("segmentation_evidence", None)
+    seg_mock = res.pop("segmentation_mock", False)
+
+    seg_overlay_path = None
+    seg_mask_path = None
+    if seg_overlay_bytes:
+        p_overlay = config.SEGMENTATION_DIR / f"{eid}_overlay.jpg"
+        p_overlay.write_bytes(seg_overlay_bytes)
+        seg_overlay_path = str(p_overlay)
+    if seg_mask_bytes:
+        p_mask = config.SEGMENTATION_DIR / f"{eid}_mask.png"
+        p_mask.write_bytes(seg_mask_bytes)
+        seg_mask_path = str(p_mask)
+
     with db.conn() as c:
         c.execute("INSERT OR REPLACE INTO results(exam_id,capture_id,label,confidence,probs,heatmap_path,"
-                  "model,mock,email_status,created_at) VALUES(?,?,?,?,?,?,?,?,?,?)",
+                  "model,mock,email_status,created_at,segmentation_overlay_path,segmentation_mask_path,segmentation_evidence,"
+                  "segmentation_mock) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                   (eid, cap["id"], res["label"], res["confidence"], json.dumps(res["probabilities"]),
-                   str(hpath), res["model"], int(res["mock"]), "pending", db.now()))
+                   str(hpath), res["model"], int(res["mock"]), "pending", db.now(),
+                   seg_overlay_path, seg_mask_path, json.dumps(seg_evidence) if seg_evidence else None,
+                   int(bool(seg_mock))))
         c.execute("UPDATE exams SET status='analyzed', selected_capture_id=? WHERE id=?", (cap["id"], eid))
         out = result_json(c.execute("SELECT * FROM results WHERE exam_id=?", (eid,)).fetchone())
     bus.publish(eid, "result", out)
@@ -381,7 +434,8 @@ async def device_status(request):
 
 
 async def health(request):
-    return JSONResponse({"ok": True, "model": ai.model.name, "mock": ai.model.mock})
+    return JSONResponse({"ok": True, "model": ai.model.name, "mock": ai.model.mock,
+                         "segmentation_model": config.SEG_MODEL_PATH.name, "segmentation_mock": ai.model.seg_mock})
 
 
 # ───────────────────────── app ─────────────────────────
@@ -397,6 +451,8 @@ async def lifespan(app):
     log.info("model: %s", ai.model.name)
     if ai.model.mock:
         log.warning("no model at %s -> MOCK AI (results are fake)", config.MODEL_PATH)
+    if ai.model.seg_mock:
+        log.warning("no segmentation model at %s -> MOCK segmentation (results are fake)", config.SEG_MODEL_PATH)
     yield
 
 
@@ -414,6 +470,8 @@ routes = [
     Route("/api/exams/{exam_id}/analyze", analyze, methods=["POST"]),
     Route("/api/exams/{exam_id}/heatmap", heatmap_image),
     Route("/api/exams/{exam_id}/cropped", cropped_image),
+    Route("/api/exams/{exam_id}/segmentation/overlay", segmentation_overlay_image),
+    Route("/api/exams/{exam_id}/segmentation/mask", segmentation_mask_image),
     Route("/api/captures/{capture_id}/image", capture_image),
     Route("/api/device/captures", device_upload, methods=["POST"]),
     Route("/api/device/heartbeat", device_heartbeat, methods=["POST"]),

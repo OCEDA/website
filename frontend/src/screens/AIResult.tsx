@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { NavProps } from "../App";
 import * as api from "../api";
-import type { ApiResult } from "../api";
+import type { ApiResult, ApiSegEvidence } from "../api";
 import { StageIndicator } from "./PatientInfo";
 import { useI18n } from "../i18n";
 import type { TKey } from "../i18n";
@@ -164,18 +164,16 @@ export default function AIResult({ goTo, patient, exam, setExam, user }: NavProp
         <div className="space-y-5">
           {/* Classification banner */}
           <div
-            className={`rounded-2xl p-5 flex flex-col sm:flex-row items-start sm:items-center gap-4 ${
-              result.classification === "Normal"
-                ? "bg-emerald-50 dark:bg-emerald-900/20 border border-emerald-200 dark:border-emerald-800/40"
-                : "bg-[#FFF1F1] dark:bg-accent/10 border border-accent/25"
-            }`}
+            className={`rounded-2xl p-5 flex flex-col sm:flex-row items-start sm:items-center gap-4 ${result.classification === "Normal"
+              ? "bg-emerald-50 dark:bg-emerald-900/20 border border-emerald-200 dark:border-emerald-800/40"
+              : "bg-[#FFF1F1] dark:bg-accent/10 border border-accent/25"
+              }`}
           >
             <div
-              className={`w-12 h-12 rounded-2xl flex items-center justify-center shrink-0 ${
-                result.classification === "Normal"
-                  ? "bg-emerald-100 dark:bg-emerald-900/40"
-                  : "bg-[#FFE4E4] dark:bg-accent/20"
-              }`}
+              className={`w-12 h-12 rounded-2xl flex items-center justify-center shrink-0 ${result.classification === "Normal"
+                ? "bg-emerald-100 dark:bg-emerald-900/40"
+                : "bg-[#FFE4E4] dark:bg-accent/20"
+                }`}
             >
               {result.classification === "Normal" ? (
                 <CheckCircle2 size={24} className="text-emerald-900 dark:text-emerald-400" />
@@ -186,22 +184,20 @@ export default function AIResult({ goTo, patient, exam, setExam, user }: NavProp
             <div className="flex-1">
               <div className="flex flex-wrap items-center gap-3">
                 <h3
-                  className={`text-2xl font-extrabold font-display ${
-                    result.classification === "Normal"
-                      ? "text-emerald-900 dark:text-emerald-400"
-                      : "text-coral-ink dark:text-coral-soft"
-                  }`}
+                  className={`text-2xl font-extrabold font-display ${result.classification === "Normal"
+                    ? "text-emerald-900 dark:text-emerald-400"
+                    : "text-coral-ink dark:text-coral-soft"
+                    }`}
                 >
                   {t(`cls.${result.classification}` as TKey)}
                 </h3>
                 <ConfidencePill confidence={result.confidence} classification={result.classification} />
               </div>
               <p
-                className={`text-sm mt-1 ${
-                  result.classification === "Normal"
-                    ? "text-emerald-900/70 dark:text-emerald-400/70"
-                    : "text-coral-ink dark:text-coral-soft/80"
-                }`}
+                className={`text-sm mt-1 ${result.classification === "Normal"
+                  ? "text-emerald-900/70 dark:text-emerald-400/70"
+                  : "text-coral-ink dark:text-coral-soft/80"
+                  }`}
               >
                 {result.classification === "Normal"
                   ? t("ai.normalMsg")
@@ -222,6 +218,11 @@ export default function AIResult({ goTo, patient, exam, setExam, user }: NavProp
             <ImagePanel label={t("ai.original")} src={api.mediaUrl(result.original_url)} tag={t("ai.originalTag")} />
             <ImagePanel label={t("ai.heatmap")} src={api.mediaUrl(`${result.heatmap_url}?v=${encodeURIComponent(result.created_at)}`)} tag={t("ai.heatmapTag")} accent />
           </div>
+
+          {/* Segmentasi anatomi (UNet ResNet-34) */}
+          {result.segmentation_overlay_url && (
+            <SegmentationSection result={result} />
+          )}
 
           {/* Disclaimer */}
           <div className="rounded-xl bg-[#F5F7FA] dark:bg-[#0B1120] border border-[#E8E8E8] dark:border-[#1E293B] p-4 flex gap-3">
@@ -309,11 +310,10 @@ function ImagePanel({
       <div className="flex items-center justify-between px-4 py-2.5 border-b border-[#E8E8E8] dark:border-[#1E293B] bg-[#F5F7FA] dark:bg-[#0B1120]">
         <span className="text-xs font-semibold text-[#1F1F1F] dark:text-[#F1F5F9]">{label}</span>
         <span
-          className={`text-[10px] font-bold uppercase tracking-wide px-2 py-0.5 rounded-full ${
-            accent
-              ? "bg-primary/10 text-primary-ink dark:text-primary-soft"
-              : "bg-[#E8E8E8] dark:bg-[#334155] text-muted dark:text-muted-dark"
-          }`}
+          className={`text-[10px] font-bold uppercase tracking-wide px-2 py-0.5 rounded-full ${accent
+            ? "bg-primary/10 text-primary-ink dark:text-primary-soft"
+            : "bg-[#E8E8E8] dark:bg-[#334155] text-muted dark:text-muted-dark"
+            }`}
         >
           {tag}
         </span>
@@ -334,6 +334,87 @@ function ImagePanel({
           </p>
         </div>
       )}
+    </div>
+  );
+}
+
+function SegmentationSection({ result }: { result: ApiResult }) {
+  const { t } = useI18n();
+  const evidence = Object.values(result.segmentation_evidence ?? {}) as ApiSegEvidence[];
+  const v = encodeURIComponent(result.created_at);
+
+  return (
+    <div className="space-y-3">
+      <div>
+        <h3 className="text-base font-extrabold text-[#1F1F1F] dark:text-white font-display">{t("ai.segTitle")}</h3>
+        <p className="text-xs text-muted dark:text-muted-dark mt-0.5">{t("ai.segDesc")}</p>
+      </div>
+
+      {result.segmentation_mock && (
+        <div role="status" className="rounded-xl border border-amber-300/60 bg-amber-50 dark:bg-amber-900/20 dark:border-amber-700/40 p-3 flex gap-2 items-start">
+          <AlertCircle size={15} className="text-amber-800 dark:text-amber-400 shrink-0 mt-0.5" />
+          <p className="text-xs text-amber-900 dark:text-amber-300">{t("ai.segMock")}</p>
+        </div>
+      )}
+
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 items-start">
+        {/* Overlay: gambar penuh (tidak di-crop), jadi pakai object-contain */}
+        <div className="rounded-2xl overflow-hidden border border-[#E8E8E8] dark:border-[#1E293B] shadow-sm card-gradient">
+          <div className="flex items-center justify-between px-4 py-2.5 border-b border-[#E8E8E8] dark:border-[#1E293B] bg-[#F5F7FA] dark:bg-[#0B1120]">
+            <span className="text-xs font-semibold text-[#1F1F1F] dark:text-[#F1F5F9]">{t("ai.segOverlay")}</span>
+            <span className="text-[10px] font-bold uppercase tracking-wide px-2 py-0.5 rounded-full bg-primary/10 text-primary-ink dark:text-primary-soft">
+              {t("ai.segOverlayTag")}
+            </span>
+          </div>
+          <div className="bg-medical-bg flex items-center justify-center">
+            <img
+              src={api.mediaUrl(`${result.segmentation_overlay_url}?v=${v}`)}
+              alt={t("ai.segOverlay")}
+              className="w-full h-auto max-h-[420px] object-contain"
+            />
+          </div>
+        </div>
+
+        {/* Legenda + evidence per kelas */}
+        <div className="rounded-2xl overflow-hidden border border-[#E8E8E8] dark:border-[#1E293B] shadow-sm card-gradient">
+          <table className="w-full text-xs">
+            <thead>
+              <tr className="bg-[#F5F7FA] dark:bg-[#0B1120] text-muted dark:text-muted-dark text-left">
+                <th className="px-3 py-2.5 font-semibold">{t("ai.segClass")}</th>
+                <th className="px-3 py-2.5 font-semibold text-right">{t("ai.segArea")}</th>
+                <th className="px-3 py-2.5 font-semibold text-right">{t("ai.segConf")}</th>
+              </tr>
+            </thead>
+            <tbody>
+              {evidence.map((e) => (
+                <tr key={e.name} className="border-t border-[#E8E8E8] dark:border-[#1E293B]">
+                  <td className="px-3 py-2.5">
+                    <span className="flex items-center gap-2 text-[#1F1F1F] dark:text-[#F1F5F9] capitalize">
+                      <span
+                        className="w-3 h-3 rounded-sm shrink-0 border border-black/10"
+                        style={{ backgroundColor: `rgb(${e.color.join(",")})` }}
+                      />
+                      {e.name}
+                    </span>
+                  </td>
+                  {e.visible ? (
+                    <>
+                      <td className="px-3 py-2.5 text-right font-mono text-[#1F1F1F] dark:text-[#F1F5F9]">{e.area_ratio.toFixed(1)}%</td>
+                      <td className="px-3 py-2.5 text-right font-mono text-[#1F1F1F] dark:text-[#F1F5F9]">{e.confidence.toFixed(1)}%</td>
+                    </>
+                  ) : (
+                    <td colSpan={2} className="px-3 py-2.5 text-right text-muted dark:text-muted-dark">{t("ai.segNotDetected")}</td>
+                  )}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <p className="px-3 py-2.5 text-[10px] text-muted dark:text-muted-dark border-t border-[#E8E8E8] dark:border-[#1E293B] flex items-start gap-1">
+            <Info size={10} className="mt-0.5 shrink-0" />
+            {t("ai.segNote")}
+          </p>
+        </div>
+      </div>
     </div>
   );
 }

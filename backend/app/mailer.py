@@ -5,7 +5,7 @@ from email.message import EmailMessage
 from . import config
 
 
-def send_result(to: str, exam: dict, result: dict, original_path, heatmap_path) -> str:
+def send_result(to: str, exam: dict, result: dict, original_path, heatmap_path, seg_overlay_path=None) -> str:
     msg = EmailMessage()
     msg["From"] = config.SMTP_FROM
     msg["To"] = to
@@ -16,9 +16,12 @@ def send_result(to: str, exam: dict, result: dict, original_path, heatmap_path) 
         f"Patient: {exam['patient_name']} ({exam['patient_id']}), {exam['ear']} ear\n"
         f"AI classification: {result['label']}  |  confidence {result['confidence']:.1f}%\n"
         f"{mock_note}\n"
-        "Attached: original capture and AI heatmap.\n"
+        "Attached: original capture, AI heatmap and anatomical segmentation overlay.\n"
         "This is an AI-assisted screening aid, not a diagnosis.\n")
-    for p, name in ((original_path, f"{exam['id']}-original.jpg"), (heatmap_path, f"{exam['id']}-heatmap.jpg")):
+    files = [(original_path, f"{exam['id']}-original.jpg"), (heatmap_path, f"{exam['id']}-heatmap.jpg")]
+    if seg_overlay_path is not None:
+        files.append((seg_overlay_path, f"{exam['id']}-segmentation.jpg"))
+    for p, name in files:
         msg.add_attachment(p.read_bytes(), maintype="image", subtype="jpeg", filename=name)
 
     if not config.SMTP_HOST:

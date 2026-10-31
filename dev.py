@@ -120,6 +120,7 @@ def main():
     procs = {
         "backend": spawn("backend", [venv_python(), "-m", "uvicorn", "app.main:app",
                                      "--host", "0.0.0.0", "--port", "8000",
+                                     "--reload",
                                      # open SSE streams would otherwise stall Ctrl+C
                                      "--timeout-graceful-shutdown", "3"], BACKEND),
         "frontend": spawn("frontend", [npm, "run", "dev"], FRONTEND),
