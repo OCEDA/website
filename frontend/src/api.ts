@@ -6,7 +6,7 @@ const BASE: string = (import.meta.env.VITE_API_URL as string | undefined) ?? "";
 const TOKEN_KEY = "oceda.token";
 export const UNAUTH_EVENT = "oceda:unauthorized";
 
-export interface ApiUser { id: number; email: string; name: string }
+export interface ApiUser { id: number; email: string; name: string; avatar_url?: string | null }
 
 export interface ApiCapture {
   id: string;
@@ -127,6 +127,10 @@ export async function register(name: string, email: string, password: string): P
   return r.user;
 }
 export const me = () => request<ApiUser>("/api/auth/me");
+/** Raw image bytes in the body; the backend crops to a 256px square JPEG. Returns the updated user. */
+export const uploadAvatar = (file: File) =>
+  request<ApiUser>("/api/auth/avatar", { method: "PUT", body: file, headers: { "Content-Type": file.type || "application/octet-stream" } });
+export const removeAvatar = () => request<ApiUser>("/api/auth/avatar", { method: "DELETE" });
 export async function logout(): Promise<void> {
   try { await request("/api/auth/logout", { method: "POST" }); } catch { /* already gone */ }
   clearToken();

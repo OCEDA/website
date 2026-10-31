@@ -9,7 +9,7 @@ from . import config
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS users(
   id INTEGER PRIMARY KEY, email TEXT UNIQUE NOT NULL, name TEXT NOT NULL,
-  pw_hash TEXT NOT NULL, created_at TEXT NOT NULL);
+  pw_hash TEXT NOT NULL, created_at TEXT NOT NULL, avatar_path TEXT);
 CREATE TABLE IF NOT EXISTS sessions(
   token_hash TEXT PRIMARY KEY, user_id INTEGER NOT NULL REFERENCES users(id),
   expires_at TEXT NOT NULL);
@@ -64,6 +64,9 @@ def init():
     config.ensure_dirs()
     with conn() as c:
         c.executescript(SCHEMA)
+        # existing databases created before profile photos existed
+        if "avatar_path" not in {row["name"] for row in c.execute("PRAGMA table_info(users)")}:
+            c.execute("ALTER TABLE users ADD COLUMN avatar_path TEXT")
         columns = {row["name"] for row in c.execute("PRAGMA table_info(devices)")}
         if "battery" in columns:
             c.execute("ALTER TABLE devices DROP COLUMN battery")

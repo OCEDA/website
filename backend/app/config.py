@@ -47,10 +47,12 @@ DB_PATH = DATA_DIR / "oceda.db"
 CAPTURE_DIR = DATA_DIR / "captures"
 HEATMAP_DIR = DATA_DIR / "heatmaps"
 OUTBOX_DIR = DATA_DIR / "outbox"  # .eml files land here when SMTP is not configured
+AVATAR_DIR = DATA_DIR / "avatars"  # one square JPEG per user: <user_id>.jpg
+MAX_AVATAR_MB = int(_env("OCEDA_MAX_AVATAR_MB", "5"))
 
 # --- auth / seeding (prototype defaults - change them) ---
 DEMO_EMAIL = _env("OCEDA_DEMO_EMAIL", "dr.sari@oceda.local")
-DEMO_PASSWORD = _env("OCEDA_DEMO_PASSWORD", "ocedaaa")
+DEMO_PASSWORD = _env("OCEDA_DEMO_PASSWORD", "oceda123")
 DEMO_NAME = _env("OCEDA_DEMO_NAME", "Dr. Dewi Sari")
 DEMO_DEVICE_TOKEN = _env("OCEDA_DEVICE_TOKEN", "oceda-dev-device-token")
 OPEN_SIGNUP = _env("OCEDA_OPEN_SIGNUP", "1") == "1"
@@ -89,5 +91,5 @@ SMTP_FROM = _env("OCEDA_SMTP_FROM", "OCEDA <no-reply@oceda.local>")
 
 
 def ensure_dirs():
-    for d in (DATA_DIR, CAPTURE_DIR, HEATMAP_DIR, SEGMENTATION_DIR, OUTBOX_DIR):
+    for d in (DATA_DIR, CAPTURE_DIR, HEATMAP_DIR, SEGMENTATION_DIR, OUTBOX_DIR, AVATAR_DIR):
         d.mkdir(parents=True, exist_ok=True)

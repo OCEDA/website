@@ -1,7 +1,9 @@
 import { useState, useRef, useEffect } from "react";
 import { NavProps } from "../App";
 import { useI18n, Lang } from "../i18n";
-import { User, Sun, Camera, Bell, LogOut, Check, ChevronDown, Languages } from "lucide-react";
+import { User, Sun, Camera, Bell, LogOut, Check, ChevronDown, Languages, Loader2 } from "lucide-react";
+import Avatar from "../Avatar";
+import * as api from "../api";
 
 interface SettingsProps extends NavProps {
   darkMode: boolean;
@@ -112,8 +114,42 @@ function Dropdown({
   );
 }
 
-export default function Settings({ user, signOut, darkMode, setDarkMode }: SettingsProps) {
+const MAX_PHOTO_BYTES = 5 * 1024 * 1024;
+
+export default function Settings({ user, setUser, signOut, darkMode, setDarkMode }: SettingsProps) {
   const { t, lang, setLang } = useI18n();
+  const fileRef = useRef<HTMLInputElement>(null);
+  const [photoBusy, setPhotoBusy] = useState(false);
+  const [photoError, setPhotoError] = useState("");
+
+  const pickPhoto = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = ""; // allow choosing the same file again
+    if (!file) return;
+    if (!/^image\/(jpeg|png|webp)$/.test(file.type)) return setPhotoError(t("set.photoBad"));
+    if (file.size > MAX_PHOTO_BYTES) return setPhotoError(t("set.photoTooBig"));
+    setPhotoBusy(true);
+    setPhotoError("");
+    try {
+      setUser(await api.uploadAvatar(file));
+    } catch {
+      setPhotoError(t("set.photoFail"));
+    } finally {
+      setPhotoBusy(false);
+    }
+  };
+
+  const dropPhoto = async () => {
+    setPhotoBusy(true);
+    setPhotoError("");
+    try {
+      setUser(await api.removeAvatar());
+    } catch {
+      setPhotoError(t("set.photoFail"));
+    } finally {
+      setPhotoBusy(false);
+    }
+  };
   const [name, setName] = useState(user?.name ?? "");
   const [role, setRole] = useState(() => t("role.gp"));
   const [clinic, setClinic] = useState("");
@@ -139,6 +175,36 @@ export default function Settings({ user, signOut, darkMode, setDarkMode }: Setti
       </div>
 
       <Card icon={User} title={t("set.profile")}>
+        <div className="flex items-center gap-4 mb-6">
+          <Avatar name={user?.name} url={user?.avatar_url} size="w-16 h-16 text-xl" />
+          <div className="min-w-0">
+            <p className="text-sm font-medium text-[#1F1F1F] dark:text-[#F1F5F9]">{t("set.photo")}</p>
+            <p className="text-xs text-muted dark:text-muted-dark">{t("set.photoHint")}</p>
+            <div className="flex flex-wrap items-center gap-2 mt-2">
+              <input ref={fileRef} type="file" accept="image/jpeg,image/png,image/webp" className="hidden" onChange={pickPhoto} />
+              <button
+                type="button"
+                disabled={photoBusy}
+                onClick={() => fileRef.current?.click()}
+                className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl border border-[#E8E8E8] dark:border-[#1E293B] bg-white dark:bg-[#1E2A3B] text-xs font-semibold text-[#1F1F1F] dark:text-[#F1F5F9] hover:border-primary transition-colors cursor-pointer disabled:opacity-70"
+              >
+                {photoBusy && <Loader2 size={13} className="animate-spin" />}
+                {user?.avatar_url ? t("set.photoChange") : t("set.photoUpload")}
+              </button>
+              {user?.avatar_url && (
+                <button
+                  type="button"
+                  disabled={photoBusy}
+                  onClick={dropPhoto}
+                  className="px-3.5 py-2 rounded-xl text-xs font-semibold text-coral-ink dark:text-coral-soft hover:bg-[#F5F7FA] dark:hover:bg-[#1E2A3B] transition-colors cursor-pointer disabled:opacity-70"
+                >
+                  {t("set.photoRemove")}
+                </button>
+              )}
+            </div>
+            {photoError && <p role="alert" className="mt-2 text-xs text-coral-ink dark:text-coral-soft">{photoError}</p>}
+          </div>
+        </div>
         <div className="grid sm:grid-cols-2 gap-5">
           <div>
             <label htmlFor="s-name" className={labelCls}>{t("set.fullName")}</label>

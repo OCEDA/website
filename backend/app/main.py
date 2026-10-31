@@ -1,6 +1,7 @@
 """OCEDA prototype backend. Run:  uvicorn app.main:app --host 0.0.0.0 --port 8000"""
 import asyncio
 import hashlib
+import io
 import json
 import logging
 import re
@@ -10,6 +11,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from PIL import Image
 
+from PIL import Image, ImageOps
 from starlette.applications import Starlette
 from starlette.background import BackgroundTask
 from starlette.concurrency import run_in_threadpool
@@ -95,8 +97,16 @@ def new_exam_id(c) -> str:
 
 
 # ───────────────────────── auth ─────────────────────────
+def _avatar_file(u) -> Path | None:
+    p = Path(u["avatar_path"]) if u["avatar_path"] else None
+    return p if p and p.is_file() else None
+
+
 def _user_json(u):
-    return {"id": u["id"], "email": u["email"], "name": u["name"]}
+    p = _avatar_file(u)
+    # ?v= changes with every upload so the browser never shows a stale picture
+    url = f"/api/auth/avatar?v={int(p.stat().st_mtime)}" if p else None
+    return {"id": u["id"], "email": u["email"], "name": u["name"], "avatar_url": url}
 
 
 async def login(request):
@@ -131,6 +141,58 @@ async def logout(request):
     auth.current_user(request)
     auth.logout(auth.bearer_token(request))
     return JSONResponse({"ok": True})
+
+
+def _make_avatar(data: bytes) -> bytes:
+    """Decode any common image, fix phone rotation, centre-crop to a square, 256x256 JPEG."""
+    try:
+        img = Image.open(io.BytesIO(data))
+        img.load()
+    except Exception:
+        raise ValueError("not a readable image (use JPEG, PNG or WebP)")
+    img = ImageOps.exif_transpose(img).convert("RGB")
+    img = ImageOps.fit(img, (256, 256), Image.LANCZOS)
+    out = io.BytesIO()
+    img.save(out, "JPEG", quality=88)
+    return out.getvalue()
+
+
+async def avatar_get(request):
+    user = auth.current_user(request)
+    p = _avatar_file(user)
+    if not p:
+        raise HTTPException(404, "no profile photo")
+    return FileResponse(p, media_type="image/jpeg", headers={"Cache-Control": "private, max-age=86400"})
+
+
+async def avatar_put(request):
+    """Body = raw image bytes (the browser sends the File as-is)."""
+    user = auth.current_user(request)
+    data = await _read_body(request, config.MAX_AVATAR_MB * 1024 * 1024)
+    if not data:
+        raise HTTPException(422, "empty upload")
+    try:
+        jpeg = await run_in_threadpool(_make_avatar, data)
+    except ValueError as ex:
+        raise HTTPException(422, str(ex))
+    path = config.AVATAR_DIR / f"{user['id']}.jpg"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(jpeg)
+    with db.conn() as c:
+        c.execute("UPDATE users SET avatar_path=? WHERE id=?", (str(path), user["id"]))
+        row = c.execute("SELECT * FROM users WHERE id=?", (user["id"],)).fetchone()
+    return JSONResponse(_user_json(row))
+
+
+async def avatar_delete(request):
+    user = auth.current_user(request)
+    p = _avatar_file(user)
+    if p:
+        p.unlink(missing_ok=True)
+    with db.conn() as c:
+        c.execute("UPDATE users SET avatar_path=NULL WHERE id=?", (user["id"],))
+        row = c.execute("SELECT * FROM users WHERE id=?", (user["id"],)).fetchone()
+    return JSONResponse(_user_json(row))
 
 
 # ───────────────────────── examinations (web app) ─────────────────────────
@@ -376,8 +438,10 @@ async def device_upload(request):
         dup = c.execute("SELECT * FROM captures WHERE id=?", (cid,)).fetchone()
         if dup:                                           # retry of a frame we already stored
             return JSONResponse({"duplicate": True, "capture": cap_json(dup)})
-        exam = c.execute("SELECT id FROM exams WHERE user_id=? AND status='open' "
-                         "ORDER BY created_at DESC, rowid DESC LIMIT 1", (dev["user_id"],)).fetchone()
+        # One shared device serves every doctor: the frame goes to the most recently started open
+        # exam, whoever owns it. (If two doctors have exams open at once, the newest one wins.)
+        exam = c.execute("SELECT id FROM exams WHERE status='open' "
+                         "ORDER BY created_at DESC, rowid DESC LIMIT 1").fetchone()
     if not exam:
         raise HTTPException(409, "no active examination - start one in the web app first")
 
@@ -417,10 +481,10 @@ async def device_heartbeat(request):
 
 
 async def device_status(request):
-    """For the header chips: connection and resolution."""
-    user = auth.current_user(request)
+    """For the header chips: connection and resolution (the device is shared by all doctors)."""
+    auth.current_user(request)
     with db.conn() as c:
-        d = c.execute("SELECT * FROM devices WHERE user_id=? ORDER BY last_seen DESC LIMIT 1", (user["id"],)).fetchone()
+        d = c.execute("SELECT * FROM devices ORDER BY last_seen DESC LIMIT 1").fetchone()
     if not d:
         return JSONResponse({"registered": False, "connected": False})
     seen = d["last_seen"]
@@ -460,6 +524,9 @@ routes = [
     Route("/api/auth/register", register, methods=["POST"]),
     Route("/api/auth/me", me),
     Route("/api/auth/logout", logout, methods=["POST"]),
+    Route("/api/auth/avatar", avatar_get, methods=["GET"]),
+    Route("/api/auth/avatar", avatar_put, methods=["PUT"]),
+    Route("/api/auth/avatar", avatar_delete, methods=["DELETE"]),
     Route("/api/exams", create_exam, methods=["POST"]),
     Route("/api/exams", list_exams, methods=["GET"]),
     Route("/api/exams/{exam_id}", read_exam),
