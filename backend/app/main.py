@@ -8,6 +8,7 @@ import uuid
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
 from pathlib import Path
+from PIL import Image
 
 from starlette.applications import Starlette
 from starlette.background import BackgroundTask
@@ -48,7 +49,8 @@ def result_json(r) -> dict:
     return {"classification": r["label"], "confidence": r["confidence"],
             "probabilities": json.loads(r["probs"]),
             "capture_id": r["capture_id"],
-            "original_url": f"/api/captures/{r['capture_id']}/image",
+            "original_url": f"/api/exams/{r['exam_id']}/cropped",
+            "original_full_url": f"/api/captures/{r['capture_id']}/image",
             "heatmap_url": f"/api/exams/{r['exam_id']}/heatmap",
             "model": r["model"], "mock": bool(r["mock"]),
             "email": r["email_status"], "created_at": r["created_at"]}
@@ -212,16 +214,46 @@ async def heatmap_image(request):
     return FileResponse(r["heatmap_path"], media_type="image/jpeg", headers={"Cache-Control": "no-cache"})
 
 
+async def cropped_image(request):
+    user = auth.current_user(request)
+    with db.conn() as c:
+        e = get_exam(c, request.path_params["exam_id"], user)
+        r = c.execute("SELECT capture_id FROM results WHERE exam_id=?", (e["id"],)).fetchone()
+    if not r:
+        raise HTTPException(404, "no result yet")
+    cpath = config.HEATMAP_DIR / f"{e['id']}_crop.jpg"
+    if cpath.exists():
+        return FileResponse(cpath, media_type="image/jpeg", headers={"Cache-Control": "no-cache"})
+    # On-demand fallback: generate cropped image if missing
+    with db.conn() as c:
+        cap = c.execute("SELECT path FROM captures WHERE id=?", (r["capture_id"],)).fetchone()
+    if cap and Path(cap["path"]).exists():
+        try:
+            img = ai.open_image(cap["path"])
+            crop_img = ai.center_crop_square(img)
+            if crop_img.width > 1024:
+                crop_img = crop_img.resize((1024, 1024), Image.LANCZOS)
+            cpath.parent.mkdir(parents=True, exist_ok=True)
+            crop_img.save(str(cpath), "JPEG", quality=90)
+            return FileResponse(cpath, media_type="image/jpeg", headers={"Cache-Control": "no-cache"})
+        except Exception as ex:
+            log.warning("failed to crop capture: %s", ex)
+            return FileResponse(cap["path"], media_type="image/jpeg")
+    raise HTTPException(404, "image not found")
+
+
 # ───────────────────────── AI analysis ─────────────────────────
 def _email_task(exam_id: str, to: str):
     with db.conn() as c:
         e = c.execute("SELECT * FROM exams WHERE id=?", (exam_id,)).fetchone()
         r = c.execute("SELECT * FROM results WHERE exam_id=?", (exam_id,)).fetchone()
         cap = c.execute("SELECT path FROM captures WHERE id=?", (r["capture_id"],)).fetchone()
+    cpath = config.HEATMAP_DIR / f"{exam_id}_crop.jpg"
+    orig_path = cpath if cpath.exists() else Path(cap["path"])
     try:
         status = mailer.send_result(
             to, dict(e), {"label": r["label"], "confidence": r["confidence"], "mock": bool(r["mock"])},
-            Path(cap["path"]), Path(r["heatmap_path"]))
+            orig_path, Path(r["heatmap_path"]))
     except Exception as ex:  # never let email problems break the result
         log.exception("email failed")
         status = f"failed: {ex}"
@@ -252,6 +284,10 @@ async def analyze(request):
 
     hpath = config.HEATMAP_DIR / f"{eid}.jpg"
     hpath.write_bytes(res.pop("heatmap_jpeg"))
+    cpath = config.HEATMAP_DIR / f"{eid}_crop.jpg"
+    crop_bytes = res.pop("cropped_jpeg", None)
+    if crop_bytes:
+        cpath.write_bytes(crop_bytes)
     with db.conn() as c:
         c.execute("INSERT OR REPLACE INTO results(exam_id,capture_id,label,confidence,probs,heatmap_path,"
                   "model,mock,email_status,created_at) VALUES(?,?,?,?,?,?,?,?,?,?)",
@@ -377,6 +413,7 @@ routes = [
     Route("/api/exams/{exam_id}/selection", select_capture, methods=["PUT"]),
     Route("/api/exams/{exam_id}/analyze", analyze, methods=["POST"]),
     Route("/api/exams/{exam_id}/heatmap", heatmap_image),
+    Route("/api/exams/{exam_id}/cropped", cropped_image),
     Route("/api/captures/{capture_id}/image", capture_image),
     Route("/api/device/captures", device_upload, methods=["POST"]),
     Route("/api/device/heartbeat", device_heartbeat, methods=["POST"]),

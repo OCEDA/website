@@ -1,0 +1,9 @@
+{
+  "threshold": 0.5,
+  "idx_abnormal": 0,
+  "idx_normal": 1,
+  "classes": [
+    "Abnormal",
+    "Normal"
+  ]
+}

@@ -26,6 +26,7 @@ export interface ApiResult {
   probabilities: Record<string, number>;
   capture_id: string;
   original_url: string;
+  original_full_url?: string;
   heatmap_url: string;
   model: string;
   mock: boolean; // true => no real model loaded, result is simulated

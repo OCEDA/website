@@ -319,12 +319,11 @@ function ImagePanel({
         </span>
       </div>
       {/* Image */}
-      <div className="bg-medical-bg flex items-center justify-center" style={{ minHeight: 260 }}>
+      <div className="bg-medical-bg flex items-center justify-center aspect-square overflow-hidden">
         <img
           src={src}
           alt={label}
-          className="w-full object-contain"
-          style={{ maxHeight: 340 }}
+          className="w-full h-full object-cover"
         />
       </div>
       {accent && (

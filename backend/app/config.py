@@ -69,6 +69,7 @@ MODEL_KIND = _env("OCEDA_MODEL_KIND", "resnet")          # resnet | yolo
 LABELS = [s.strip() for s in _env("OCEDA_LABELS", "Normal,Abnormal").split(",")]
 INPUT_SIZE = int(_env("OCEDA_INPUT_SIZE", "640" if MODEL_KIND == "yolo" else "224"))
 NORM = _env("OCEDA_NORM", "none" if MODEL_KIND == "yolo" else "imagenet")  # imagenet | none
+ABNORMAL_THRESHOLD = float(_env("OCEDA_ABNORMAL_THRESHOLD", "0.5"))
 HEATMAP_MODE = _env("OCEDA_HEATMAP", "auto")             # auto | cam | occlusion
 YOLO_CONF = float(_env("OCEDA_YOLO_CONF", "0.25"))
 YOLO_IOU = float(_env("OCEDA_YOLO_IOU", "0.45"))

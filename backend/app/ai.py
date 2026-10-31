@@ -58,14 +58,33 @@ def inspect_jpeg(data: bytes) -> dict:
 
 
 # ───────────────────────── preprocessing ─────────────────────────
+
+def center_crop_square(img: Image.Image) -> Image.Image:
+    """Ambil crop persegi dari tengah gambar (1:1 square crop)."""
+    w, h = img.size
+    side = min(w, h)
+    left = (w - side) // 2
+    top = (h - side) // 2
+    return img.crop((left, top, left + side, top + side))
+
+
 def preprocess_classifier(img: Image.Image, size: int, norm: str) -> np.ndarray:
-    """ResNet-style: squash-resize to SxS (keeps the whole eardrum in view), RGB, /255, NCHW."""
-    a = np.asarray(img.resize((size, size), Image.BILINEAR), np.float32) / 255.0
+    """Preprocessing MobileNetV2: RGB, center crop square, resize,
+    konversi ke [0,1], normalisasi ImageNet, lalu NCHW.
+    """
+    img = center_crop_square(img)
+
+    # Resize dan konversi nilai piksel ke rentang [0,1].
+    img = img.resize((size, size), Image.BILINEAR)
+    a = np.asarray(img, dtype=np.float32) / 255.0
+
+    # HWC -> NCHW, dengan dimensi batch.
     x = a.transpose(2, 0, 1)[None]
+
     if norm == "imagenet":
         x = (x - IMAGENET_MEAN) / IMAGENET_STD
-    return np.ascontiguousarray(x, dtype=np.float32)
 
+    return np.ascontiguousarray(x, dtype=np.float32)
 
 def preprocess_yolo(img: Image.Image, size: int):
     """YOLO letterbox: keep aspect ratio, pad with gray 114. Returns tensor + (scale, padx, pady)."""
@@ -88,6 +107,31 @@ def to_probs(logits: np.ndarray) -> np.ndarray:
         return v
     e = np.exp(v - v.max())
     return e / e.sum()
+
+
+def classifier_decision_index(probs: np.ndarray) -> int:
+    """Terapkan threshold P(Abnormal) dari eksperimen Stage 2."""
+    labels = config.LABELS
+
+    if "Abnormal" not in labels or "Normal" not in labels:
+        raise ValueError(
+            "OCEDA_LABELS harus memuat kelas Normal dan Abnormal."
+        )
+
+    idx_abnormal = labels.index("Abnormal")
+    idx_normal = labels.index("Normal")
+
+    if len(probs) != len(labels):
+        raise ValueError(
+            f"Jumlah probabilitas ({len(probs)}) tidak cocok "
+            f"dengan jumlah label ({len(labels)})."
+        )
+
+    if probs[idx_abnormal] >= config.ABNORMAL_THRESHOLD:
+        return idx_abnormal
+
+    return idx_normal
+
 
 
 def yolo_rows(out: np.ndarray, nc: int) -> np.ndarray:
@@ -141,15 +185,23 @@ def boxes_to_heat(dets, meta, img_w: int, img_h: int) -> np.ndarray:
     return heat
 
 
-def occlusion_heatmap(predict, x: np.ndarray, k: int, grid: int = 7) -> np.ndarray:
-    """Model-agnostic heatmap: blank out each grid cell and see how much P(class k) drops."""
+def occlusion_heatmap(predict, x: np.ndarray, k: int, grid: int = 8) -> np.ndarray:
+    """Model-agnostic heatmap: blank out each grid cell inside the circular endoscopic aperture
+    and see how much P(class k) drops. Cells in the black corners/margin are ignored.
+    """
     base = predict(x)[k]
     H, W = x.shape[2:]
     ys, xs = np.linspace(0, H, grid + 1, dtype=int), np.linspace(0, W, grid + 1, dtype=int)
     fill = x.mean(axis=(2, 3), keepdims=True)
     heat = np.zeros((grid, grid), np.float32)
+    c = (grid - 1) / 2.0
+    max_r = c * 0.95
+
     for i in range(grid):
         for j in range(grid):
+            # Skip cells located in the outer black border
+            if np.sqrt((i - c) ** 2 + (j - c) ** 2) > max_r:
+                continue
             xo = x.copy()
             xo[:, :, ys[i]:ys[i + 1], xs[j]:xs[j + 1]] = fill
             heat[i, j] = max(0.0, base - predict(xo)[k])
@@ -172,7 +224,16 @@ def render_overlay(img: Image.Image, heat: np.ndarray, max_w: int = 1024) -> byt
     h = np.asarray(Image.fromarray(h, mode="F").resize(img.size, Image.BICUBIC), np.float32)
     h = np.clip(h, 0, 1)
     base = np.asarray(img, np.float32)
-    alpha = (0.55 * np.clip(h * 1.4, 0, 1))[..., None]
+
+    # Circular aperture & brightness mask: keep outer black camera bezel clean
+    w, h_img = img.size
+    Y, X = np.ogrid[:h_img, :w]
+    dist = np.sqrt((X - w / 2) ** 2 + (Y - h_img / 2) ** 2)
+    aperture_mask = np.clip((min(w, h_img) * 0.485 - dist) / max(1.0, min(w, h_img) * 0.02), 0, 1)
+    brightness_mask = np.clip((base.max(axis=-1) - 20) / 25.0, 0, 1)
+    valid_mask = (aperture_mask * brightness_mask)[..., None]
+
+    alpha = (0.55 * np.clip(h * 1.4, 0, 1))[..., None] * valid_mask
     out = base * (1 - alpha) + _jet(h) * alpha
     buf = io.BytesIO()
     Image.fromarray(out.clip(0, 255).astype(np.uint8)).save(buf, "JPEG", quality=88)
@@ -208,7 +269,7 @@ class Model:
         x = preprocess_classifier(img, config.INPUT_SIZE, config.NORM)
         outs = sess.run(None, {inp: x})
         probs = to_probs(outs[0])
-        k = int(probs.argmax())
+        k = classifier_decision_index(probs)
         mode = config.HEATMAP_MODE
         if mode in ("auto", "cam") and len(outs) > 1:
             cam = np.squeeze(outs[1]).astype(np.float32)
@@ -254,19 +315,34 @@ class Model:
         img = open_image(path)
         if self.mock:
             probs, heat = self._predict_mock(img)
+            crop_img = center_crop_square(img)
         elif config.MODEL_KIND == "yolo":
             probs, heat = self._predict_yolo(img)
+            crop_img = img
         else:
             probs, heat = self._predict_classifier(img)
-        k = int(np.argmax(probs))
+            crop_img = center_crop_square(img)
+
         labels = config.LABELS
+        if not self.mock and config.MODEL_KIND != "yolo":
+            k = classifier_decision_index(probs)
+        else:
+            k = int(np.argmax(probs))
+
+        crop_save = crop_img
+        if crop_save.width > 1024:
+            crop_save = crop_save.resize((1024, 1024), Image.LANCZOS)
+        buf = io.BytesIO()
+        crop_save.save(buf, "JPEG", quality=90)
+
         return {
             "label": labels[k] if k < len(labels) else str(k),
             "confidence": round(float(probs[k]) * 100, 1),
             "probabilities": {labels[i] if i < len(labels) else str(i): round(float(p) * 100, 1)
                               for i, p in enumerate(probs)},
             "model": self.name, "mock": self.mock,
-            "heatmap_jpeg": render_overlay(img, heat),
+            "cropped_jpeg": buf.getvalue(),
+            "heatmap_jpeg": render_overlay(crop_img, heat),
         }
 
 
