@@ -50,7 +50,7 @@ OUTBOX_DIR = DATA_DIR / "outbox"  # .eml files land here when SMTP is not config
 
 # --- auth / seeding (prototype defaults - change them) ---
 DEMO_EMAIL = _env("OCEDA_DEMO_EMAIL", "dr.sari@oceda.local")
-DEMO_PASSWORD = _env("OCEDA_DEMO_PASSWORD", "ocedaaa")
+DEMO_PASSWORD = _env("OCEDA_DEMO_PASSWORD", "oceda123")
 DEMO_NAME = _env("OCEDA_DEMO_NAME", "Dr. Dewi Sari")
 DEMO_DEVICE_TOKEN = _env("OCEDA_DEVICE_TOKEN", "oceda-dev-device-token")
 OPEN_SIGNUP = _env("OCEDA_OPEN_SIGNUP", "1") == "1"

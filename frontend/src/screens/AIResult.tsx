@@ -149,7 +149,7 @@ export default function AIResult({ goTo, patient, exam, setExam, user }: NavProp
                 {t("ai.retry")}
               </button>
               <button
-                onClick={() => goTo("capture")}
+                onClick={() => goTo("capture", exam?.id)}
                 className="px-5 py-2.5 border border-[#E8E8E8] dark:border-[#1E293B] text-muted dark:text-muted-dark rounded-xl text-sm font-medium hover:bg-[#F5F7FA] dark:hover:bg-[#0B1120]"
               >
                 {t("ai.backCapture")}
@@ -250,7 +250,7 @@ export default function AIResult({ goTo, patient, exam, setExam, user }: NavProp
           {/* Actions */}
           <div className="flex flex-col sm:flex-row items-center justify-between gap-4 pt-2">
             <button
-              onClick={() => goTo("capture")}
+              onClick={() => goTo("capture", exam?.id)}
               className="flex items-center gap-2 px-4 py-2.5 border border-[#E8E8E8] dark:border-[#1E293B] text-muted dark:text-muted-dark rounded-xl text-sm font-medium hover:bg-[#F5F7FA] dark:hover:bg-[#0B1120] transition-colors"
             >
               <ArrowLeft size={15} />

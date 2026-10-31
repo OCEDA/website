@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from "react";
 import { flushSync } from "react-dom";
 import {
   LayoutDashboard, Plus, Settings as SettingsIcon, Menu, X,
-  Wifi, WifiOff, Battery, Camera, Sun, Moon, User,
+  Wifi, WifiOff, Camera, Sun, Moon, User,
 } from "lucide-react";
 import Dashboard from "./screens/Dashboard";
 import PatientInfo from "./screens/PatientInfo";
@@ -26,7 +26,7 @@ export interface Patient {
 }
 
 export interface NavProps {
-  goTo: (screen: Screen) => void;
+  goTo: (screen: Screen, examId?: string) => void;
   patient: Patient | null;
   setPatient: (p: Patient) => void;
   exam: ApiExam | null;
@@ -39,6 +39,32 @@ export interface NavProps {
 
 const formatRes = (r?: string | null) => (r ? r.replace("x", "×") : "—");
 
+function routeFor(screen: Screen, examId?: string) {
+  if (screen === "landing") return "/";
+  if (screen === "login") return "/login";
+  if (screen === "dashboard") return "/dashboard";
+  if (screen === "settings") return "/settings";
+  if (screen === "patient-info") return "/examinations/new";
+  if (screen === "capture") return examId ? `/examinations/${encodeURIComponent(examId)}/capture` : "/examinations/new";
+  return examId ? `/examinations/${encodeURIComponent(examId)}/result` : "/dashboard";
+}
+
+function routeFromLocation(): { screen: Screen; examId?: string } {
+  const parts = window.location.pathname.split("/").filter(Boolean).map(decodeURIComponent);
+  if (parts.length === 0) return { screen: api.getToken() ? "dashboard" : "landing" };
+  if (parts.length === 1 && parts[0] === "login") return { screen: "login" };
+  if (parts.length === 1 && parts[0] === "dashboard") return { screen: api.getToken() ? "dashboard" : "login" };
+  if (parts.length === 1 && parts[0] === "settings") return { screen: api.getToken() ? "settings" : "login" };
+  if (parts.length === 2 && parts[0] === "examinations" && parts[1] === "new") {
+    return { screen: api.getToken() ? "patient-info" : "login" };
+  }
+  if (parts.length === 3 && parts[0] === "examinations") {
+    if (parts[2] === "capture") return { screen: api.getToken() ? "capture" : "login", examId: parts[1] };
+    if (parts[2] === "result") return { screen: api.getToken() ? "ai-result" : "login", examId: parts[1] };
+  }
+  return { screen: api.getToken() ? "dashboard" : "landing" };
+}
+
 export default function App() {
   return (
     <I18nProvider>
@@ -49,7 +75,8 @@ export default function App() {
 
 function AppShell() {
   const { t } = useI18n();
-  const [screen, setScreen] = useState<Screen>(() => (api.getToken() ? "dashboard" : "landing"));
+  const [screen, setScreen] = useState<Screen>(() => routeFromLocation().screen);
+  const [routeExamId, setRouteExamId] = useState<string | undefined>(() => routeFromLocation().examId);
   const [patient, setPatient] = useState<Patient | null>(null);
   const [exam, setExam] = useState<ApiExam | null>(null);
   const [user, setUser] = useState<ApiUser | null>(null);
@@ -89,10 +116,46 @@ function AppShell() {
 
   // any 401 from the backend => back to the login screen
   useEffect(() => {
-    const onUnauth = () => { setUser(null); setExam(null); setPatient(null); setScreen("login"); };
+    const onUnauth = () => {
+      setUser(null); setExam(null); setPatient(null);
+      window.history.replaceState(null, "", "/login");
+      setScreen("login");
+      setRouteExamId(undefined);
+    };
     window.addEventListener(api.UNAUTH_EVENT, onUnauth);
     return () => window.removeEventListener(api.UNAUTH_EVENT, onUnauth);
   }, []);
+
+  useEffect(() => {
+    const onPopState = () => {
+      const route = routeFromLocation();
+      setScreen(route.screen);
+      setRouteExamId(route.examId);
+      setSidebarOpen(false);
+    };
+    window.addEventListener("popstate", onPopState);
+    return () => window.removeEventListener("popstate", onPopState);
+  }, []);
+
+  useEffect(() => {
+    if (!routeExamId || (screen !== "capture" && screen !== "ai-result") || exam?.id === routeExamId) return;
+    api.getExam(routeExamId)
+      .then((loaded) => {
+        setExam(loaded);
+        setPatient({
+          id: loaded.patient.id,
+          name: loaded.patient.name,
+          dob: loaded.patient.dob ?? "",
+          ear: loaded.patient.ear,
+          notes: loaded.patient.notes ?? "",
+        });
+      })
+      .catch(() => {
+        window.history.replaceState(null, "", "/dashboard");
+        setRouteExamId(undefined);
+        setScreen("dashboard");
+      });
+  }, [exam?.id, routeExamId, screen]);
 
   // device chips: poll the backend (the Pi sends a heartbeat every 10s)
   const loggedIn = screen !== "landing" && screen !== "login";
@@ -108,9 +171,12 @@ function AppShell() {
     return () => { live = false; clearInterval(iv); };
   }, [loggedIn]);
 
-  const goTo = (s: Screen) => {
+  const goTo = (s: Screen, examId?: string) => {
     if (s !== "landing" && s !== "login" && !api.getToken()) s = "login";
+    const target = routeFor(s, examId);
+    window.history.pushState(null, "", target);
     setScreen(s);
+    setRouteExamId(examId);
     setSidebarOpen(false);
     if (s === "patient-info") setExam(null);
   };
@@ -118,6 +184,7 @@ function AppShell() {
   const signOut = () => {
     void api.logout();
     setUser(null); setExam(null); setPatient(null);
+    window.history.replaceState(null, "", "/login");
     setScreen("login");
   };
 
@@ -175,7 +242,6 @@ function AppShell() {
           {/* Device chips */}
           <div className="flex items-center gap-2">
             <DeviceChip connected={device.connected} name={device.name} />
-            {device.connected && device.battery != null && <BatteryChip level={device.battery} />}
             {device.connected && <ResolutionChip res={formatRes(device.resolution)} />}
           </div>
 
@@ -285,9 +351,6 @@ function SidebarContent({
           </div>
           <div className="flex items-center justify-between text-[11px] text-muted dark:text-muted-dark">
             <span className="flex items-center gap-1">
-              <Battery size={11} /> {device.battery != null ? `${device.battery}%` : "—"}
-            </span>
-            <span className="flex items-center gap-1">
               <Camera size={11} /> {formatRes(device.resolution)}
             </span>
           </div>
@@ -372,22 +435,6 @@ function DeviceChip({ connected, name }: { connected: boolean; name?: string }) 
     >
       {connected ? <Wifi size={11} /> : <WifiOff size={11} />}
       <span>{connected ? name ?? "OCEDA device" : t("device.disconnected")}</span>
-    </div>
-  );
-}
-
-function BatteryChip({ level }: { level: number }) {
-  const low = level < 20;
-  return (
-    <div
-      className={`hidden md:flex items-center gap-1 px-2 py-1 rounded-full text-[11px] font-medium ${
-        low
-          ? "text-coral-ink dark:text-coral-soft bg-[#FFF1F1] dark:bg-accent/10"
-          : "text-muted dark:text-muted-dark bg-[#F5F7FA] dark:bg-[#1E2A3B]"
-      }`}
-    >
-      <Battery size={11} />
-      <span>{level}%</span>
     </div>
   );
 }

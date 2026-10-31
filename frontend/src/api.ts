@@ -50,7 +50,6 @@ export interface DeviceStatus {
   connected: boolean;
   name?: string;
   last_seen?: string | null;
-  battery?: number | null;
   resolution?: string | null;
   firmware?: string | null;
 }
@@ -120,6 +119,7 @@ export async function logout(): Promise<void> {
 export const createExam = (p: { id: string; name: string; dob: string; ear: "Left" | "Right"; notes: string }) =>
   request<ApiExam>("/api/exams", { method: "POST", body: JSON.stringify({ patient: p }) });
 export const listExams = () => request<ApiExam[]>("/api/exams");
+export const getExam = (examId: string) => request<ApiExam>(`/api/exams/${examId}`);
 export const selectCapture = (examId: string, captureId: string) =>
   request<{ selected_capture_id: string }>(`/api/exams/${examId}/selection`, {
     method: "PUT", body: JSON.stringify({ capture_id: captureId }) });

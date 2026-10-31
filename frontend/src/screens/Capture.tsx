@@ -99,7 +99,7 @@ export default function Capture({ goTo, patient, exam, setExam, device }: NavPro
     }
   };
 
-  const handleAnalyze = () => goTo("ai-result");
+  const handleAnalyze = () => goTo("ai-result", exam?.id);
   const handleRetry = () => setRetryKey((k) => k + 1);
 
   const prev = () => setCaptureIdx(Math.max(0, captureIdx - 1));

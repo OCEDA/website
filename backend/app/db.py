@@ -16,7 +16,7 @@ CREATE TABLE IF NOT EXISTS sessions(
 CREATE TABLE IF NOT EXISTS devices(
   id INTEGER PRIMARY KEY, user_id INTEGER NOT NULL REFERENCES users(id),
   name TEXT NOT NULL, token_hash TEXT UNIQUE NOT NULL,
-  last_seen TEXT, battery INTEGER, resolution TEXT, firmware TEXT);
+  last_seen TEXT, resolution TEXT, firmware TEXT);
 CREATE TABLE IF NOT EXISTS exams(
   id TEXT PRIMARY KEY, user_id INTEGER NOT NULL REFERENCES users(id),
   patient_id TEXT NOT NULL, patient_name TEXT NOT NULL, dob TEXT, ear TEXT NOT NULL,
@@ -62,3 +62,6 @@ def init():
     config.ensure_dirs()
     with conn() as c:
         c.executescript(SCHEMA)
+        columns = {row["name"] for row in c.execute("PRAGMA table_info(devices)")}
+        if "battery" in columns:
+            c.execute("ALTER TABLE devices DROP COLUMN battery")

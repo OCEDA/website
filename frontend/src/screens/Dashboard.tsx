@@ -5,7 +5,7 @@ import type { ApiExam } from "../api";
 import { useI18n, TKey } from "../i18n";
 import {
   ArrowRight, ClipboardList, Camera, ScanEye, BrainCircuit,
-  Wifi, Battery, Monitor, ChevronRight, Activity, CheckCircle2,
+  Wifi, Monitor, ChevronRight, Activity, CheckCircle2,
   AlertCircle, Clock,
 } from "lucide-react";
 
@@ -68,7 +68,7 @@ export default function Dashboard({ goTo, user, device, setExam, setPatient }: N
   const openAnalysis = (e: ApiExam) => {
     setExam(e);
     setPatient({ id: e.patient.id, name: e.patient.name, dob: e.patient.dob ?? "", ear: e.patient.ear, notes: e.patient.notes ?? "" });
-    goTo("ai-result");
+    goTo("ai-result", e.id);
   };
 
   return (
@@ -267,19 +267,6 @@ export default function Dashboard({ goTo, user, device, setExam, setPatient }: N
                 label={device.name ?? "OCEDA device"}
                 value={device.connected ? t("dash.connected") : t("device.disconnected")}
                 status={device.connected ? "ok" : "warn"}
-              />
-              <DiagRow
-                icon={<Battery size={15} />}
-                label={t("dash.battery")}
-                value={device.battery != null ? `${device.battery}%` : "—"}
-                status="ok"
-                extra={
-                  device.battery != null ? (
-                    <div className="w-full h-1.5 bg-[#E8E8E8] dark:bg-[#334155] rounded-full overflow-hidden mt-1.5">
-                      <div className="h-full bg-emerald-500 rounded-full bar-grow" style={{ width: `${device.battery}%` }} />
-                    </div>
-                  ) : undefined
-                }
               />
               <DiagRow
                 icon={<Monitor size={15} />}

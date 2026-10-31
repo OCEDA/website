@@ -322,16 +322,14 @@ async def device_upload(request):
 async def device_heartbeat(request):
     dev = auth.current_device(request)
     d = await jbody(request) if await request.body() else {}
-    battery = d.get("battery")
     with db.conn() as c:
-        c.execute("UPDATE devices SET last_seen=?, battery=?, resolution=COALESCE(?,resolution), firmware=? WHERE id=?",
-                  (db.now(), battery if isinstance(battery, int) else None, d.get("resolution"),
-                   d.get("firmware"), dev["id"]))
+        c.execute("UPDATE devices SET last_seen=?, resolution=COALESCE(?,resolution), firmware=? WHERE id=?",
+                  (db.now(), d.get("resolution"), d.get("firmware"), dev["id"]))
     return JSONResponse({"ok": True})
 
 
 async def device_status(request):
-    """For the header chips: connected / battery / resolution."""
+    """For the header chips: connection and resolution."""
     user = auth.current_user(request)
     with db.conn() as c:
         d = c.execute("SELECT * FROM devices WHERE user_id=? ORDER BY last_seen DESC LIMIT 1", (user["id"],)).fetchone()
@@ -341,7 +339,7 @@ async def device_status(request):
     online = bool(seen) and datetime.fromisoformat(seen) > datetime.fromisoformat(db.now()) - timedelta(
         seconds=config.DEVICE_ONLINE_SECONDS)
     return JSONResponse({"registered": True, "connected": online, "name": d["name"], "last_seen": seen,
-                         "battery": d["battery"], "resolution": d["resolution"], "firmware": d["firmware"]})
+                         "resolution": d["resolution"], "firmware": d["firmware"]})
 
 
 async def health(request):

@@ -50,9 +50,10 @@ export default function PatientInfo({ goTo, setPatient, setExam }: NavProps) {
     setCreateError(false);
     try {
       // opens the examination on the backend: from now on frames from the device attach to it
-      setExam(await api.createExam(p));
+      const created = await api.createExam(p);
+      setExam(created);
       setPatient(p);
-      goTo("capture");
+      goTo("capture", created.id);
     } catch {
       setCreateError(true);
     } finally {

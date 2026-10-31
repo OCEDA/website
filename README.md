@@ -17,7 +17,7 @@
 around a Raspberry Pi captures ear images, a web app guides the examination, and an AI model classifies the selected
 image and highlights the region that drove its decision.
 
-- **Examination dashboard** - start sessions, see recent exams and live device status (connection, battery, resolution).
+- **Examination dashboard** - start sessions, see recent exams and live device status (connection and resolution).
 - **Patient information** - record patient details before a capture session.
 - **Live capture** - frames pressed on the device appear in the browser immediately; each is scored for sharpness and
   exposure so the best frame is suggested (the clinician always makes the final pick).
@@ -51,6 +51,16 @@ start immediately. **Ctrl+C stops everything.**
 |---|---|
 | Web app | http://localhost:5173 |
 | Backend health check | http://localhost:8000/api/health |
+
+The web app uses browser URLs for navigation:
+
+| Page | URL |
+|---|---|
+| Dashboard | `/dashboard` |
+| New examination | `/examinations/new` |
+| Capture / review | `/examinations/<exam-id>/capture` |
+| AI result | `/examinations/<exam-id>/result` |
+| Settings | `/settings` |
 
 Log in with the demo account **`dr.sari@oceda.local`** / **`oceda123`**, click **Start New Examination**, and fill in
 the patient form.
