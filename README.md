@@ -17,7 +17,7 @@
 around a Raspberry Pi captures ear images, a web app guides the examination, and an AI model classifies the selected
 image and highlights the region that drove its decision.
 
-- **Examination dashboard** - start sessions, see recent exams and live device status (connection and resolution).
+- **Examination dashboard** - start sessions, see recent exams and live device status (connection, battery, resolution).
 - **Patient information** - record patient details before a capture session.
 - **Live capture** - frames pressed on the device appear in the browser immediately; each is scored for sharpness and
   exposure so the best frame is suggested (the clinician always makes the final pick).
@@ -51,16 +51,6 @@ start immediately. **Ctrl+C stops everything.**
 |---|---|
 | Web app | http://localhost:5173 |
 | Backend health check | http://localhost:8000/api/health |
-
-The web app uses browser URLs for navigation:
-
-| Page | URL |
-|---|---|
-| Dashboard | `/dashboard` |
-| New examination | `/examinations/new` |
-| Capture / review | `/examinations/<exam-id>/capture` |
-| AI result | `/examinations/<exam-id>/result` |
-| Settings | `/settings` |
 
 Log in with the demo account **`dr.sari@oceda.local`** / **`oceda123`**, click **Start New Examination**, and fill in
 the patient form.
@@ -218,11 +208,18 @@ renames it to `.jpg`. `pi_client.py --native` starts that program, restarts it i
 in the spool with the same retry/backoff logic as before.
 
 ```bash
-# on the Pi (Raspberry Pi OS Bookworm: libgpiod 2.x is required)
+# from your computer: copy the whole device folder (pi_client.py + capture/), not just pi_client.py
+scp -r backend/device pi@raspberrypi.local:~/oceda
+
+# on the Pi
 sudo apt install -y g++ make pkg-config libcamera-dev libgpiod-dev libjpeg-dev
-make -C backend/device/capture
-OCEDA_SERVER=http://<server-lan-ip>:8000 OCEDA_DEVICE_TOKEN=... python3 backend/device/pi_client.py --native
+make -C ~/oceda/capture
+OCEDA_SERVER=http://<server-lan-ip>:8000 OCEDA_DEVICE_TOKEN=... python3 ~/oceda/pi_client.py --native
 ```
+
+**libgpiod 2.x is required** (the program uses the v2 line-request API). Stock Raspberry Pi OS *Bookworm* ships
+libgpiod 1.6.x and will not build it; *Trixie* ships 2.x (Bookworm needs `bookworm-backports` enabled). `make` checks
+this first and tells you which version it found. Check with `pkg-config --modversion libgpiod`.
 
 - The C++ program owns the camera, GPIO21, SPI and LEDs, so don't run it together with the `rpicam-still` / `gpiozero`
   path; `--native` replaces it. `--simulate`, `--keyboard` and `--once` still work for testing without hardware.
@@ -230,7 +227,12 @@ OCEDA_SERVER=http://<server-lan-ip>:8000 OCEDA_DEVICE_TOKEN=... python3 backend/
 - Frames are 240×240 (what the LCD shows), so uploads are small (~20 KB); there is no busy lock in this mode.
 - If saved images have red and blue swapped, rebuild with `make clean && make SWAP_RB=1` (libcamera's `RGB888` is
   B,G,R in memory; the LCD path was kept exactly as in the working preview).
-- Run `./oceda_capture` by hand to see the preview and button without any upload.
+- Run `./oceda_capture` by hand to see the preview and button without any upload (photos still land in the spool;
+  `pi_client.py --native` would upload them later). Ctrl+C stops it and turns the LEDs off.
+- Each photo is named `oto_<date>_<time>_<random>.jpg`. The random part matters: the Pi Zero W has no battery clock,
+  and the server treats a repeated `X-Capture-Id` as a duplicate and silently drops the second image.
+- The old standalone build wrote to a hard-coded `/home/<user>/oceda-capture/captures/`. That folder is no longer
+  used; the spool (`$OCEDA_SPOOL`) is the only place photos go.
 
 ### Frame quality hint
 
@@ -293,7 +295,10 @@ Pi. It covers auth, uploads and retries, SSE, selection, analysis, email, and pe
 - [x] AI inference pipeline (ResNet / YOLO via ONNX) with mock fallback
 - [x] Result email with heatmap
 - [ ] Real trained model in `backend/models/` (currently mock unless you add one)
-- [ ] `--native` path verified on physical hardware (the C++ capture program compiles; the upload path was tested with a stand-in binary, not the real camera)
+- [ ] `--native` path verified on physical hardware. The C++ program is compile-checked against libcamera and the
+      libgpiod 2.x headers, and its real `save_jpeg()` (crop, JPEG, atomic spool write, unique ids) was run through
+      `pi_client.py --native` and the backend end to end. Camera, LCD, LEDs and button have not been exercised on the
+      device itself since this was integrated.
 
 ### Known limits (prototype)
 
