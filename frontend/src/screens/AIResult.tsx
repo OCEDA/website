@@ -223,6 +223,36 @@ export default function AIResult({ goTo, patient, exam, setExam, user }: NavProp
             <ImagePanel label={t("ai.heatmap")} src={api.mediaUrl(`${result.heatmap_url}?v=${encodeURIComponent(result.created_at)}`)} tag={t("ai.heatmapTag")} accent />
           </div>
 
+          {result.segmentation_overlay_url && (
+            <div className="rounded-2xl overflow-hidden border border-[#E8E8E8] dark:border-[#1E293B] shadow-sm card-gradient">
+              <div className="px-4 py-2.5 border-b border-[#E8E8E8] dark:border-[#1E293B] bg-[#F5F7FA] dark:bg-[#0B1120]">
+                <span className="text-xs font-semibold text-[#1F1F1F] dark:text-[#F1F5F9]">
+                  Anatomical segmentation
+                </span>
+              </div>
+              <div className="bg-medical-bg flex items-center justify-center">
+                <img
+                  src={api.mediaUrl(`${result.segmentation_overlay_url}?v=${encodeURIComponent(result.created_at)}`)}
+                  alt="Anatomical segmentation overlay"
+                  className="w-full object-contain"
+                  style={{ maxHeight: 420 }}
+                />
+              </div>
+              {result.segmentation_evidence && (
+                <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 p-4 border-t border-[#E8E8E8] dark:border-[#1E293B]">
+                  {Object.values(result.segmentation_evidence).map((item) => (
+                    <div key={item.name} className="text-center">
+                      <div className="text-[11px] font-semibold text-[#1F1F1F] dark:text-[#F1F5F9]">{item.name}</div>
+                      <div className="text-[10px] text-muted dark:text-muted-dark">
+                        {item.visible ? `${item.area_ratio}% visible` : "Not detected"}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
           {/* Disclaimer */}
           <div className="rounded-xl bg-[#F5F7FA] dark:bg-[#0B1120] border border-[#E8E8E8] dark:border-[#1E293B] p-4 flex gap-3">
             <Shield size={16} className="text-muted dark:text-muted-dark shrink-0 mt-0.5" />

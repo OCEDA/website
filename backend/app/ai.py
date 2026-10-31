@@ -15,6 +15,7 @@ import io
 import logging
 import threading
 
+import cv2
 import numpy as np
 from PIL import Image, ImageOps
 
@@ -24,6 +25,15 @@ log = logging.getLogger("oceda.ai")
 
 IMAGENET_MEAN = np.array([0.485, 0.456, 0.406], np.float32).reshape(1, 3, 1, 1)
 IMAGENET_STD = np.array([0.229, 0.224, 0.225], np.float32).reshape(1, 3, 1, 1)
+
+# Segmentasi UNet ResNet-34 constants
+SEG_CLASS_NAMES = ["background", "liang", "malleus", "membran timpani", "serumen", "sekret"]
+SEG_COLOR_MAP = np.array(
+    [[0, 0, 0], [255, 0, 0], [0, 255, 0], [0, 0, 255], [255, 255, 0], [255, 0, 255]],
+    dtype=np.uint8,
+)
+SEG_MEAN = np.array([0.485, 0.456, 0.406], dtype=np.float32)
+SEG_STD = np.array([0.229, 0.224, 0.225], dtype=np.float32)
 
 
 # ───────────────────────── image helpers ─────────────────────────
@@ -58,13 +68,100 @@ def inspect_jpeg(data: bytes) -> dict:
 
 
 # ───────────────────────── preprocessing ─────────────────────────
+
+def center_crop_square(img: Image.Image) -> Image.Image:
+    """Ambil crop persegi dari tengah gambar (1:1 square crop)."""
+    w, h = img.size
+    side = min(w, h)
+    left = (w - side) // 2
+    top = (h - side) // 2
+    return img.crop((left, top, left + side, top + side))
+
+
+def classifier_preprocessed_image(img: Image.Image, size: int = None) -> Image.Image:
+    """Citra hasil preprocessing untuk klasifikasi AI:
+    Center crop bujursangkar 1:1 lalu resize ke ukuran input model (default: config.INPUT_SIZE = 224).
+    """
+    if size is None:
+        size = config.INPUT_SIZE
+    return center_crop_square(img).resize((size, size), Image.BILINEAR)
+
+
 def preprocess_classifier(img: Image.Image, size: int, norm: str) -> np.ndarray:
-    """ResNet-style: squash-resize to SxS (keeps the whole eardrum in view), RGB, /255, NCHW."""
-    a = np.asarray(img.resize((size, size), Image.BILINEAR), np.float32) / 255.0
+    """Preprocessing MobileNetV2: RGB, center crop square, resize,
+    konversi ke [0,1], normalisasi ImageNet, lalu NCHW.
+    """
+    img = classifier_preprocessed_image(img, size)
+    a = np.asarray(img, dtype=np.float32) / 255.0
+
+    # HWC -> NCHW, dengan dimensi batch.
     x = a.transpose(2, 0, 1)[None]
+
     if norm == "imagenet":
         x = (x - IMAGENET_MEAN) / IMAGENET_STD
+
     return np.ascontiguousarray(x, dtype=np.float32)
+
+
+def preprocess_segmentation(img_rgb: np.ndarray, size: int = 256):
+    """Preprocessing UNet ResNet-34:
+    LongestMaxSize(256) -> PadIfNeeded(256, nilai 0) -> Normalize ImageNet.
+    """
+    h0, w0 = img_rgb.shape[:2]
+    scale = size / max(h0, w0)
+    new_w, new_h = max(1, round(w0 * scale)), max(1, round(h0 * scale))
+    resized = cv2.resize(img_rgb, (new_w, new_h), interpolation=cv2.INTER_LINEAR)
+
+    top, left = (size - new_h) // 2, (size - new_w) // 2
+    canvas = np.zeros((size, size, 3), dtype=np.uint8)
+    canvas[top:top + new_h, left:left + new_w] = resized
+
+    x = (canvas.astype(np.float32) / 255.0 - SEG_MEAN) / SEG_STD
+    x = np.ascontiguousarray(x.transpose(2, 0, 1)[None], dtype=np.float32)
+    return x, (top, left, new_h, new_w)
+
+
+def postprocess_segmentation(logits: np.ndarray, crop, orig_hw):
+    """Crop padding -> softmax -> argmax -> hitung evidence -> resize mask ke ukuran crop asli."""
+    top, left, h, w = crop
+    logits = logits[0, :, top:top + h, left:left + w]
+
+    e = np.exp(logits - logits.max(axis=0, keepdims=True))
+    probs = e / e.sum(axis=0, keepdims=True)
+    pred = probs.argmax(axis=0).astype(np.uint8)
+
+    total = pred.size
+    evidence = {}
+    for c, name in enumerate(SEG_CLASS_NAMES):
+        if c == 0:
+            continue
+        m = pred == c
+        area = int(m.sum())
+        evidence[name] = {
+            "name": name,
+            "visible": area > 0,
+            "area_ratio": round(float(area / total) * 100, 2),
+            "confidence": round(float(probs[c][m].mean()) * 100, 1) if area else 0.0,
+            "color": SEG_COLOR_MAP[c].tolist(),
+        }
+
+    h0, w0 = orig_hw
+    mask = cv2.resize(pred, (w0, h0), interpolation=cv2.INTER_NEAREST)
+    return mask, evidence
+
+
+def render_segmentation_overlay(img_rgb: np.ndarray, mask: np.ndarray) -> tuple[bytes, bytes]:
+    """Menghasilkan JPEG overlay (60% foto asli + 40% warna segmen) dan PNG mask warna murni."""
+    color_mask = SEG_COLOR_MAP[mask]
+    overlay = img_rgb.copy()
+    fg = mask > 0
+    overlay[fg] = (0.6 * img_rgb[fg] + 0.4 * color_mask[fg]).astype(np.uint8)
+
+    buf_overlay = io.BytesIO()
+    Image.fromarray(overlay).save(buf_overlay, "JPEG", quality=92)
+    buf_mask = io.BytesIO()
+    Image.fromarray(color_mask).save(buf_mask, "PNG")
+    return buf_overlay.getvalue(), buf_mask.getvalue()
 
 
 def preprocess_yolo(img: Image.Image, size: int):
@@ -88,6 +185,31 @@ def to_probs(logits: np.ndarray) -> np.ndarray:
         return v
     e = np.exp(v - v.max())
     return e / e.sum()
+
+
+def classifier_decision_index(probs: np.ndarray) -> int:
+    """Terapkan threshold P(Abnormal) dari eksperimen Stage 2."""
+    labels = config.LABELS
+
+    if "Abnormal" not in labels or "Normal" not in labels:
+        raise ValueError(
+            "OCEDA_LABELS harus memuat kelas Normal dan Abnormal."
+        )
+
+    idx_abnormal = labels.index("Abnormal")
+    idx_normal = labels.index("Normal")
+
+    if len(probs) != len(labels):
+        raise ValueError(
+            f"Jumlah probabilitas ({len(probs)}) tidak cocok "
+            f"dengan jumlah label ({len(labels)})."
+        )
+
+    if probs[idx_abnormal] >= config.ABNORMAL_THRESHOLD:
+        return idx_abnormal
+
+    return idx_normal
+
 
 
 def yolo_rows(out: np.ndarray, nc: int) -> np.ndarray:
@@ -141,15 +263,23 @@ def boxes_to_heat(dets, meta, img_w: int, img_h: int) -> np.ndarray:
     return heat
 
 
-def occlusion_heatmap(predict, x: np.ndarray, k: int, grid: int = 7) -> np.ndarray:
-    """Model-agnostic heatmap: blank out each grid cell and see how much P(class k) drops."""
+def occlusion_heatmap(predict, x: np.ndarray, k: int, grid: int = 8) -> np.ndarray:
+    """Model-agnostic heatmap: blank out each grid cell inside the circular endoscopic aperture
+    and see how much P(class k) drops. Cells in the black corners/margin are ignored.
+    """
     base = predict(x)[k]
     H, W = x.shape[2:]
     ys, xs = np.linspace(0, H, grid + 1, dtype=int), np.linspace(0, W, grid + 1, dtype=int)
     fill = x.mean(axis=(2, 3), keepdims=True)
     heat = np.zeros((grid, grid), np.float32)
+    c = (grid - 1) / 2.0
+    max_r = c * 0.95
+
     for i in range(grid):
         for j in range(grid):
+            # Skip cells located in the outer black border
+            if np.sqrt((i - c) ** 2 + (j - c) ** 2) > max_r:
+                continue
             xo = x.copy()
             xo[:, :, ys[i]:ys[i + 1], xs[j]:xs[j + 1]] = fill
             heat[i, j] = max(0.0, base - predict(xo)[k])
@@ -172,7 +302,16 @@ def render_overlay(img: Image.Image, heat: np.ndarray, max_w: int = 1024) -> byt
     h = np.asarray(Image.fromarray(h, mode="F").resize(img.size, Image.BICUBIC), np.float32)
     h = np.clip(h, 0, 1)
     base = np.asarray(img, np.float32)
-    alpha = (0.55 * np.clip(h * 1.4, 0, 1))[..., None]
+
+    # Circular aperture & brightness mask: keep outer black camera bezel clean
+    w, h_img = img.size
+    Y, X = np.ogrid[:h_img, :w]
+    dist = np.sqrt((X - w / 2) ** 2 + (Y - h_img / 2) ** 2)
+    aperture_mask = np.clip((min(w, h_img) * 0.485 - dist) / max(1.0, min(w, h_img) * 0.02), 0, 1)
+    brightness_mask = np.clip((base.max(axis=-1) - 20) / 25.0, 0, 1)
+    valid_mask = (aperture_mask * brightness_mask)[..., None]
+
+    alpha = (0.55 * np.clip(h * 1.4, 0, 1))[..., None] * valid_mask
     out = base * (1 - alpha) + _jet(h) * alpha
     buf = io.BytesIO()
     Image.fromarray(out.clip(0, 255).astype(np.uint8)).save(buf, "JPEG", quality=88)
@@ -183,11 +322,16 @@ def render_overlay(img: Image.Image, heat: np.ndarray, max_w: int = 1024) -> byt
 class Model:
     def __init__(self):
         self._sess = None
+        self._seg_sess = None
         self._lock = threading.Lock()
 
     @property
     def mock(self) -> bool:
         return not config.MODEL_PATH.exists()
+
+    @property
+    def seg_mock(self) -> bool:
+        return not config.SEG_MODEL_PATH.exists()
 
     @property
     def name(self) -> str:
@@ -196,10 +340,18 @@ class Model:
     def _session(self):
         with self._lock:
             if self._sess is None:
-                import onnxruntime as ort  # lazy: mock mode works without it
+                import onnxruntime as ort
                 self._sess = ort.InferenceSession(str(config.MODEL_PATH), providers=["CPUExecutionProvider"])
                 log.info("loaded %s (inputs=%s)", config.MODEL_PATH, [i.name for i in self._sess.get_inputs()])
         return self._sess
+
+    def _seg_session(self):
+        with self._lock:
+            if self._seg_sess is None and config.SEG_MODEL_PATH.exists():
+                import onnxruntime as ort
+                self._seg_sess = ort.InferenceSession(str(config.SEG_MODEL_PATH), providers=["CPUExecutionProvider"])
+                log.info("loaded segmentation %s", config.SEG_MODEL_PATH)
+        return self._seg_sess
 
     # -- real inference --
     def _predict_classifier(self, img):
@@ -208,7 +360,7 @@ class Model:
         x = preprocess_classifier(img, config.INPUT_SIZE, config.NORM)
         outs = sess.run(None, {inp: x})
         probs = to_probs(outs[0])
-        k = int(probs.argmax())
+        k = classifier_decision_index(probs)
         mode = config.HEATMAP_MODE
         if mode in ("auto", "cam") and len(outs) > 1:
             cam = np.squeeze(outs[1]).astype(np.float32)
@@ -218,6 +370,35 @@ class Model:
         else:
             heat = occlusion_heatmap(lambda t: to_probs(sess.run(None, {inp: t})[0]), x, k)
         return probs, heat
+
+    def _predict_segmentation(self, img: Image.Image):
+        # Gambar PENUH (bukan center crop): saat training dipakai LongestMaxSize + PadIfNeeded.
+        img_rgb = np.asarray(img)
+        if self.seg_mock:
+            # Deterministic simulated segmentation mask & evidence
+            h, w = img_rgb.shape[:2]
+            mask = np.zeros((h, w), dtype=np.uint8)
+            Y, X = np.ogrid[:h, :w]
+            dist = np.sqrt((X - w / 2) ** 2 + (Y - h / 2) ** 2)
+            mask[dist < min(w, h) * 0.35] = 3  # membran timpani
+            mask[(dist < min(w, h) * 0.18) & (np.abs(X - w / 2) < min(w, h) * 0.04)] = 2  # malleus
+            evidence = {
+                "liang": {"name": "liang", "visible": False, "area_ratio": 0.0, "confidence": 0.0, "color": [255, 0, 0]},
+                "malleus": {"name": "malleus", "visible": True, "area_ratio": 2.1, "confidence": 88.5, "color": [0, 255, 0]},
+                "membran timpani": {"name": "membran timpani", "visible": True, "area_ratio": 36.4, "confidence": 94.2, "color": [0, 0, 255]},
+                "serumen": {"name": "serumen", "visible": False, "area_ratio": 0.0, "confidence": 0.0, "color": [255, 255, 0]},
+                "sekret": {"name": "sekret", "visible": False, "area_ratio": 0.0, "confidence": 0.0, "color": [255, 0, 255]},
+            }
+            overlay_bytes, mask_bytes = render_segmentation_overlay(img_rgb, mask)
+            return overlay_bytes, mask_bytes, evidence
+
+        sess = self._seg_session()
+        inp = sess.get_inputs()[0].name
+        x, crop_meta = preprocess_segmentation(img_rgb, config.SEG_INPUT_SIZE)
+        logits = sess.run(None, {inp: x})[0]
+        mask, evidence = postprocess_segmentation(logits, crop_meta, img_rgb.shape[:2])
+        overlay_bytes, mask_bytes = render_segmentation_overlay(img_rgb, mask)
+        return overlay_bytes, mask_bytes, evidence
 
     def _predict_yolo(self, img):
         sess = self._session()
@@ -252,21 +433,47 @@ class Model:
 
     def analyze(self, path) -> dict:
         img = open_image(path)
+
+        # Preprocessing 1: Klasifikasi (224x224)
         if self.mock:
             probs, heat = self._predict_mock(img)
+            prep_cls = classifier_preprocessed_image(img)
         elif config.MODEL_KIND == "yolo":
             probs, heat = self._predict_yolo(img)
+            prep_cls = img
         else:
             probs, heat = self._predict_classifier(img)
-        k = int(np.argmax(probs))
+            prep_cls = classifier_preprocessed_image(img)
+
         labels = config.LABELS
+        if not self.mock and config.MODEL_KIND != "yolo":
+            k = classifier_decision_index(probs)
+        else:
+            k = int(np.argmax(probs))
+
+        buf = io.BytesIO()
+        prep_cls.save(buf, "JPEG", quality=95)
+
+        # Preprocessing 2: Segmentasi Anatomi (256x256, gambar penuh).
+        # Kegagalan segmentasi tidak boleh menggagalkan klasifikasi.
+        seg_overlay_bytes = seg_mask_bytes = seg_evidence = None
+        try:
+            seg_overlay_bytes, seg_mask_bytes, seg_evidence = self._predict_segmentation(img)
+        except Exception:
+            log.exception("segmentation failed; classification result is still returned")
+
         return {
             "label": labels[k] if k < len(labels) else str(k),
             "confidence": round(float(probs[k]) * 100, 1),
             "probabilities": {labels[i] if i < len(labels) else str(i): round(float(p) * 100, 1)
                               for i, p in enumerate(probs)},
             "model": self.name, "mock": self.mock,
-            "heatmap_jpeg": render_overlay(img, heat),
+            "cropped_jpeg": buf.getvalue(),
+            "heatmap_jpeg": render_overlay(prep_cls, heat),
+            "segmentation_overlay_jpeg": seg_overlay_bytes,
+            "segmentation_mask_png": seg_mask_bytes,
+            "segmentation_evidence": seg_evidence,
+            "segmentation_mock": self.seg_mock,
         }
 
 

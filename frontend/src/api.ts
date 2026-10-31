@@ -26,7 +26,18 @@ export interface ApiResult {
   probabilities: Record<string, number>;
   capture_id: string;
   original_url: string;
+  original_full_url?: string;
   heatmap_url: string;
+  segmentation_overlay_url?: string | null;
+  segmentation_mask_url?: string | null;
+  segmentation_evidence?: Record<string, {
+    name: string;
+    visible: boolean;
+    area_ratio: number;
+    confidence: number;
+    color: number[];
+  }> | null;
+  segmentation_mock?: boolean;
   model: string;
   mock: boolean; // true => no real model loaded, result is simulated
   email: string | null;

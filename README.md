@@ -258,6 +258,14 @@ Match what you trained with: `OCEDA_INPUT_SIZE`, `OCEDA_NORM` (`none` for plain 
 If you trained with center-crop instead of squash, change `preprocess_classifier`. For a nicer heatmap, export
 Grad-CAM/CAM as a second ONNX output (`[1,1,h,w]` or `[1,C,h,w]`).
 
+### Anatomical segmentation
+
+The analysis response can also include an anatomical segmentation overlay, mask, and per-class evidence for
+`liang`, `malleus`, `membran timpani`, `serumen`, and `sekret`. Configure a UNet ResNet-34 ONNX model with
+`OCEDA_SEG_MODEL` and `OCEDA_SEG_INPUT_SIZE` (default: `models/model_unet_resnet34_BEST.onnx` and `256`).
+If the segmentation model is absent, the classifier still runs and the segmentation output is explicitly marked
+`segmentation_mock: true`.
+
 To check the plumbing before the real model exists: `python backend/tools/make_dummy_onnx.py backend/models/model.onnx`
 writes a meaningless 2-class model ("redder image ⇒ Abnormal"). Delete it afterwards, or you'll get dummy results
 that are *not* flagged as mock.

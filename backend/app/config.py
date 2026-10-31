@@ -50,7 +50,7 @@ OUTBOX_DIR = DATA_DIR / "outbox"  # .eml files land here when SMTP is not config
 
 # --- auth / seeding (prototype defaults - change them) ---
 DEMO_EMAIL = _env("OCEDA_DEMO_EMAIL", "dr.sari@oceda.local")
-DEMO_PASSWORD = _env("OCEDA_DEMO_PASSWORD", "oceda123")
+DEMO_PASSWORD = _env("OCEDA_DEMO_PASSWORD", "ocedaaa")
 DEMO_NAME = _env("OCEDA_DEMO_NAME", "Dr. Dewi Sari")
 DEMO_DEVICE_TOKEN = _env("OCEDA_DEVICE_TOKEN", "oceda-dev-device-token")
 OPEN_SIGNUP = _env("OCEDA_OPEN_SIGNUP", "1") == "1"
@@ -62,16 +62,22 @@ CORS_ORIGINS = [o.strip() for o in _env(
 MAX_UPLOAD_MB = int(_env("OCEDA_MAX_UPLOAD_MB", "15"))
 DEVICE_ONLINE_SECONDS = int(_env("OCEDA_DEVICE_ONLINE_SECONDS", "30"))
 
-# --- AI ---
+# --- AI Classification ---
 # No model file -> MOCK mode (random-but-deterministic output, clearly flagged "mock": true).
 MODEL_PATH = _path("OCEDA_MODEL", BASE_DIR / "models" / "model.onnx")
 MODEL_KIND = _env("OCEDA_MODEL_KIND", "resnet")          # resnet | yolo
-LABELS = [s.strip() for s in _env("OCEDA_LABELS", "Normal,Abnormal").split(",")]
+LABELS = [s.strip() for s in _env("OCEDA_LABELS", "Abnormal,Normal").split(",")]
 INPUT_SIZE = int(_env("OCEDA_INPUT_SIZE", "640" if MODEL_KIND == "yolo" else "224"))
 NORM = _env("OCEDA_NORM", "none" if MODEL_KIND == "yolo" else "imagenet")  # imagenet | none
+ABNORMAL_THRESHOLD = float(_env("OCEDA_ABNORMAL_THRESHOLD", "0.5"))
 HEATMAP_MODE = _env("OCEDA_HEATMAP", "auto")             # auto | cam | occlusion
 YOLO_CONF = float(_env("OCEDA_YOLO_CONF", "0.25"))
 YOLO_IOU = float(_env("OCEDA_YOLO_IOU", "0.45"))
+
+# --- AI Segmentation (UNet ResNet-34) ---
+SEG_MODEL_PATH = _path("OCEDA_SEG_MODEL", BASE_DIR / "models" / "model_unet_resnet34_BEST.onnx")
+SEG_INPUT_SIZE = int(_env("OCEDA_SEG_INPUT_SIZE", "256"))
+SEGMENTATION_DIR = DATA_DIR / "segmentations"
 
 # --- email (leave SMTP_HOST empty to write .eml files to data/outbox instead) ---
 SMTP_HOST = _env("OCEDA_SMTP_HOST", "")
@@ -83,5 +89,5 @@ SMTP_FROM = _env("OCEDA_SMTP_FROM", "OCEDA <no-reply@oceda.local>")
 
 
 def ensure_dirs():
-    for d in (DATA_DIR, CAPTURE_DIR, HEATMAP_DIR, OUTBOX_DIR):
+    for d in (DATA_DIR, CAPTURE_DIR, HEATMAP_DIR, SEGMENTATION_DIR, OUTBOX_DIR):
         d.mkdir(parents=True, exist_ok=True)

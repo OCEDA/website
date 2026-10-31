@@ -181,9 +181,9 @@ def main():
     check(r.status_code == 409, "finished exam no longer accepts frames")
 
     print("device status")
-    requests.post(base + "/api/device/heartbeat", headers=DEV)
+    requests.post(base + "/api/device/heartbeat", headers=DEV, json={"battery": 78})
     s = requests.get(base + "/api/device/status", headers=H).json()
-    check(s["connected"], f"device status {s['name']} connected")
+    check(s["connected"] and s["battery"] == 78, f"device status {s['name']} connected, battery 78")
     lst = requests.get(base + "/api/exams", headers=H).json()
     check(lst[0]["id"] == eid and lst[0]["result"]["classification"] == res["classification"], "dashboard list shows the result")
 
